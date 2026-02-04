@@ -12,16 +12,8 @@ repositories {
 }
 
 dependencies {
-    // Ktor для веб-сервера
-    implementation("io.ktor:ktor-server-core:2.3.5")
-    implementation("io.ktor:ktor-server-netty:2.3.5")
-    implementation("io.ktor:ktor-server-content-negotiation:2.3.5")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.5")
-    implementation("io.ktor:ktor-server-cors:2.3.5")
-    implementation("io.ktor:ktor-server-html-builder:2.3.5")
-    implementation("io.ktor:ktor-server-core-jvm:2.3.5")
-    implementation("io.ktor:ktor-server-websockets:2.3.5")
-    implementation("org.jetbrains.kotlinx:kotlinx-html-jvm:0.9.1")
+    // Telegram Bot API
+    implementation("com.github.pengrad:java-telegram-bot-api:5.0.1")
     
     // Firebase Admin SDK
     implementation("com.google.firebase:firebase-admin:9.2.0")
@@ -31,6 +23,9 @@ dependencies {
     
     // Kotlinx Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
+    
+    // Coroutines (for suspend RulesService)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     
     testImplementation(kotlin("test"))
 }
