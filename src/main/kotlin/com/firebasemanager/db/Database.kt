@@ -14,6 +14,6 @@ fun initDatabase() {
         driver = "org.h2.Driver"
     )
     transaction {
-        SchemaUtils.create(ProjectTable)
+        SchemaUtils.create(ProjectTable, AppUserTable, HistoryTable, LinkTemplateTable)
     }
 }

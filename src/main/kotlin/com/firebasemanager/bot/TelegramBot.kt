@@ -1,5 +1,7 @@
 package com.firebasemanager.bot
 
+import com.firebasemanager.db.getAppUserChatId
+import com.firebasemanager.db.getOrCreateAppUser
 import com.firebasemanager.db.getProject
 import com.firebasemanager.db.insertProject
 import com.firebasemanager.db.listProjectsByUser
@@ -49,6 +51,12 @@ class FirebaseTelegramBot(
 
     fun getBotToken(): String = token
 
+    /** Sends a message to the user by their Telegram user id (uses stored chat_id). No-op if chat_id is unknown. */
+    fun sendMessageToUser(userId: Long, text: String) {
+        val chatId = getAppUserChatId(userId) ?: return
+        sendSafe(chatId, text)
+    }
+
     fun processUpdate(update: Update) {
         try {
             handleUpdate(update)
@@ -61,18 +69,26 @@ class FirebaseTelegramBot(
     private fun handleUpdate(update: Update) {
         val callback = update.callbackQuery()
         if (callback != null) {
+            syncAppUser(callback.from().id().toLong(), callback.message()?.chat()?.id(), callback.from().firstName(), callback.from().lastName())
             handleCallback(callback)
             return
         }
         val msg = update.message() ?: return
         val chatId = msg.chat().id()
-        val userId = msg.from()?.id()?.toLong() ?: chatId
+        val from = msg.from() ?: return
+        val userId = from.id().toLong()
+        syncAppUser(userId, chatId, from.firstName(), from.lastName())
         val text = msg.text() ?: ""
 
         when {
             text.startsWith("/") -> handleCommand(chatId, userId, text.trim())
             else -> handleText(chatId, userId, text)
         }
+    }
+
+    private fun syncAppUser(userId: Long, chatId: Long?, firstName: String?, lastName: String?) {
+        val name = listOfNotNull(firstName, lastName).joinToString(" ").trim().takeIf { it.isNotEmpty() }
+        getOrCreateAppUser(userId = userId, chatId = chatId, name = name, avatarUrl = null)
     }
 
     private fun handleCommand(chatId: Long, userId: Long, command: String) {

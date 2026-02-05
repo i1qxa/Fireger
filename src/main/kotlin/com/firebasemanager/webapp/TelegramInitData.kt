@@ -8,19 +8,30 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * Проверка подписи initData от Telegram Web App и извлечение user.id.
+ * Проверка подписи initData от Telegram Web App и извлечение user.id / полного объекта user.
  * Алгоритм (по документации Telegram): secret_key = HMAC-SHA256(key="WebAppData", message=bot_token);
  * data_check_string = sorted key=value (без hash), joined \n;
  * computed = HMAC-SHA256(secret_key, data_check_string); сравнить hex с hash.
  */
+data class TelegramUser(
+    val id: Long,
+    val firstName: String? = null,
+    val lastName: String? = null,
+    val username: String? = null,
+    val photoUrl: String? = null
+) {
+    val fullName: String?
+        get() = listOfNotNull(firstName, lastName).filter { it.isNotBlank() }.joinToString(" ").takeIf { it.isNotBlank() }
+}
+
 object TelegramInitData {
 
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * Проверяет initData и возвращает Telegram user id или null при неверной подписи/отсутствии user.
+     * Проверяет initData и возвращает полный объект пользователя из user JSON или null при неверной подписи/отсутствии user.
      */
-    fun validateAndGetUserId(botToken: String, initData: String): Long? {
+    fun validateAndGetUser(botToken: String, initData: String): TelegramUser? {
         if (initData.isBlank()) return null
         val params = initData.split("&").associate { part ->
             val idx = part.indexOf('=')
@@ -32,18 +43,30 @@ object TelegramInitData {
         val dataCheckString = params.filter { it.key != "hash" }
             .toSortedMap()
             .entries.joinToString("\n") { "${it.key}=${it.value}" }
-        // По документации: secret_key = HMAC(key="WebAppData", message=bot_token)
         val secretKey = hmacSha256("WebAppData".toByteArray(Charsets.UTF_8), botToken.toByteArray(Charsets.UTF_8))
         val computed = hmacSha256Hex(secretKey, dataCheckString.toByteArray(Charsets.UTF_8))
         if (!computed.equals(hash, ignoreCase = true)) return null
         val userJson = params["user"] ?: return null
         return try {
             val user = json.parseToJsonElement(userJson).jsonObject
-            user["id"]?.jsonPrimitive?.content?.toLongOrNull()
+            val id = user["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: return null
+            TelegramUser(
+                id = id,
+                firstName = user["first_name"]?.jsonPrimitive?.content,
+                lastName = user["last_name"]?.jsonPrimitive?.content,
+                username = user["username"]?.jsonPrimitive?.content,
+                photoUrl = user["photo_url"]?.jsonPrimitive?.content
+            )
         } catch (_: Exception) {
             null
         }
     }
+
+    /**
+     * Проверяет initData и возвращает Telegram user id или null при неверной подписи/отсутствии user.
+     */
+    fun validateAndGetUserId(botToken: String, initData: String): Long? =
+        validateAndGetUser(botToken, initData)?.id
 
     private fun hmacSha256(key: ByteArray, message: ByteArray): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")

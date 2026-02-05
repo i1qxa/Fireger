@@ -25,8 +25,13 @@
     .field-name { font-weight: 600; font-size: 14px; margin-bottom: 6px; display: block; }
     .field-block textarea { width: 100%; min-height: 80px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; font-family: inherit; resize: vertical; box-sizing: border-box; }
     .field-actions { display: flex; flex-direction: row; gap: 10px; margin-top: 8px; }
-    .field-actions .btn-save { background: #2e7d32; color: #fff; }
-    .field-actions .btn-clear { background: #c62828; color: #fff; margin-left: auto; }
+    .field-actions .btn-save { background: #2e7d32; color: #fff; margin-left: auto; }
+    .field-template-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+    .field-template-row select { min-width: 180px; padding: 6px 10px; border-radius: 6px; }
+    .template-row { display: flex; align-items: center; gap: 12px; padding: 10px; margin: 6px 0; background: var(--tg-theme-secondary-bg-color, #f0f0f0); border-radius: 8px; flex-wrap: wrap; }
+    .template-row .template-link { font-size: 12px; color: var(--tg-theme-hint-color, #666); overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+    .template-row .btn-delete-template { background: #c62828; color: #fff; padding: 6px 12px; font-size: 13px; }
+    .user-row .btn-delete-user { background: #c62828; color: #fff; padding: 6px 12px; font-size: 13px; }
     .rules-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
     .rules-row .rules-status { font-weight: 600; }
     .rules-status--ok { color: #2e7d32; }
@@ -44,12 +49,51 @@
     .view.active { display: block; }
     .add-project-btn { width: 100%; margin-top: 12px; padding: 12px; }
     .empty-state { text-align: center; padding: 24px 12px; color: var(--tg-theme-hint-color, #666); }
+    .screen { display: none; }
+    .screen.active { display: block; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .tabs button { padding: 8px 14px; border-radius: 6px; border: 1px solid var(--tg-theme-button-color, #2481cc); background: var(--tg-theme-secondary-bg-color, #f0f0f0); color: var(--tg-theme-text-color, #000); cursor: pointer; }
+    .tabs button.active { background: var(--tg-theme-button-color, #2481cc); color: var(--tg-theme-button-text-color, #fff); }
+    .no-access-box { text-align: center; padding: 32px 16px; max-width: 360px; margin: 0 auto; }
+    .no-access-box p { margin: 16px 0; line-height: 1.5; color: var(--tg-theme-hint-color, #666); }
+    .user-row { display: flex; align-items: center; gap: 12px; padding: 10px; margin: 6px 0; background: var(--tg-theme-secondary-bg-color, #f0f0f0); border-radius: 8px; flex-wrap: wrap; }
+    .user-row .avatar-wrap { width: 40px; height: 40px; border-radius: 50%; overflow: hidden; background: var(--tg-theme-hint-color, #999); flex-shrink: 0; }
+    .user-row .avatar-wrap img { width: 100%; height: 100%; object-fit: cover; }
+    .user-row .user-info { flex: 1; min-width: 0; }
+    .user-row select { padding: 6px 10px; border-radius: 6px; min-width: 120px; }
+    .history-row { padding: 10px; margin: 6px 0; background: var(--tg-theme-secondary-bg-color, #f0f0f0); border-radius: 6px; font-size: 14px; }
+    .history-row .history-meta { color: var(--tg-theme-hint-color, #666); font-size: 12px; margin-bottom: 4px; }
   </style>
 </head>
 <body>
   <h1>Firebase Manager</h1>
   <p class="status" id="status"></p>
 
+  <!-- Экран «Нет доступа» -->
+  <div id="noAccessScreen" class="screen">
+    <div class="no-access-box">
+      <p>У вас нет доступа к приложению.</p>
+      <button id="requestAccessBtn">Запросить доступ</button>
+      <p class="error" id="requestAccessError"></p>
+    </div>
+  </div>
+
+  <!-- Экран «Запросили доступ, ожидайте» -->
+  <div id="accessRequestedScreen" class="screen">
+    <div class="no-access-box">
+      <p>Вы запросили доступ. Ожидайте решения администратора.</p>
+    </div>
+  </div>
+
+  <!-- Основное приложение (вкладки для admin, только Firebase для user) -->
+  <div id="mainAppScreen" class="screen">
+    <div id="tabsBar" class="tabs" style="display: none;">
+      <button type="button" data-tab="firebase" class="active">Firebase</button>
+      <button type="button" data-tab="templates">Шаблоны</button>
+      <button type="button" data-tab="users">Пользователи</button>
+      <button type="button" data-tab="history">История</button>
+    </div>
+    <div id="tabFirebase" class="tab-content">
   <!-- Экран списка проектов -->
   <div id="listView" class="view active">
     <div class="card">
@@ -144,6 +188,47 @@
   </div>
   <button id="backFromDetailBtn" style="margin-top: 12px;">Назад к списку</button>
   </div>
+    </div>
+    <div id="tabTemplates" class="tab-content" style="display: none;">
+      <div class="card">
+        <h2>Шаблоны ссылок</h2>
+        <p class="status">Создайте шаблоны (название и ссылка). На вкладке Firebase можно подставить ссылку из шаблона в поле.</p>
+        <div class="add-row">
+          <label for="templateNameInput">Название</label>
+          <input type="text" id="templateNameInput" placeholder="Например: Notion страница">
+        </div>
+        <div class="add-row">
+          <label for="templateLinkInput">Ссылка</label>
+          <input type="text" id="templateLinkInput" placeholder="https://...">
+        </div>
+        <button id="addTemplateBtn" style="margin-bottom: 12px;">Добавить шаблон</button>
+        <p class="error" id="templatesError"></p>
+        <div id="templatesList"></div>
+      </div>
+    </div>
+    <div id="tabUsers" class="tab-content" style="display: none;">
+      <div class="card">
+        <h2>Пользователи</h2>
+        <div id="usersList"></div>
+        <div id="usersLoading" class="block-loading" style="display: none;"><div class="loading-spinner"></div><span>Загрузка…</span></div>
+        <p class="error" id="usersError"></p>
+      </div>
+    </div>
+    <div id="tabHistory" class="tab-content" style="display: none;">
+      <div class="card">
+        <h2>История</h2>
+        <div class="filter-row">
+          <label>Проект:</label>
+          <select id="historyProjectFilter">
+            <option value="">Все проекты</option>
+          </select>
+        </div>
+        <div id="historyList"></div>
+        <div id="historyLoading" class="block-loading" style="display: none;"><div class="loading-spinner"></div><span>Загрузка…</span></div>
+        <p class="error" id="historyError"></p>
+      </div>
+    </div>
+  </div>
 
   <script>
     (function() {
@@ -184,15 +269,48 @@
       const STATUSES = ['Development', 'Ready', 'Moderation', 'Product', 'Ban'];
       let projects = [];
       let selectedId = null;
+      let me = null;
+      var initialFieldValues = {};
 
       function setStatus(msg) {
         document.getElementById('status').textContent = msg || '';
+      }
+
+      function showScreen(id) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        const el = document.getElementById(id);
+        if (el) el.classList.add('active');
       }
 
       function showView(name) {
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
         const el = document.getElementById(name + 'View');
         if (el) el.classList.add('active');
+      }
+
+      var templatesCache = [];
+
+      function switchTab(tabName) {
+        document.querySelectorAll('#tabsBar button').forEach(b => {
+          b.classList.toggle('active', b.dataset.tab === tabName);
+        });
+        document.getElementById('tabFirebase').style.display = tabName === 'firebase' ? 'block' : 'none';
+        document.getElementById('tabTemplates').style.display = tabName === 'templates' ? 'block' : 'none';
+        document.getElementById('tabUsers').style.display = tabName === 'users' ? 'block' : 'none';
+        document.getElementById('tabHistory').style.display = tabName === 'history' ? 'block' : 'none';
+        if (tabName === 'users') loadUsers();
+        if (tabName === 'templates') loadTemplates();
+        if (tabName === 'history') {
+          var sel = document.getElementById('historyProjectFilter');
+          while (sel.options.length > 1) sel.removeChild(sel.options[1]);
+          projects.forEach(function(p) {
+            var opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = p.name || p.displayName || p.id;
+            sel.appendChild(opt);
+          });
+          loadHistory();
+        }
       }
 
       function getSelectedStatuses() {
@@ -232,6 +350,135 @@
           renderProjectsList();
         }).catch(err => {
           setStatus('Ошибка: ' + err.message);
+        });
+      }
+
+      function loadUsers() {
+        document.getElementById('usersError').textContent = '';
+        document.getElementById('usersLoading').style.display = 'flex';
+        document.getElementById('usersList').innerHTML = '';
+        api('GET', '/api/users').then(data => {
+          document.getElementById('usersLoading').style.display = 'none';
+          const users = data.users || [];
+          const list = document.getElementById('usersList');
+          const roleLabels = { admin: 'Админ', user: 'Пользователь', none: 'Нет доступа' };
+          users.forEach(u => {
+            const row = document.createElement('div');
+            row.className = 'user-row';
+            const avatarHtml = u.avatarUrl
+              ? '<img src="' + escapeHtml(u.avatarUrl) + '" alt="">'
+              : '';
+            const accessInfo = u.accessRequestedAt ? ' (запрос доступа)' : '';
+            row.innerHTML =
+              '<div class="avatar-wrap">' + (avatarHtml || '') + '</div>' +
+              '<div class="user-info">' +
+                '<span>' + escapeHtml(u.name || 'ID ' + u.userId) + '</span> ' +
+                '<span class="status">' + escapeHtml(String(u.userId)) + accessInfo + '</span>' +
+              '</div>' +
+              '<select data-user-id="' + u.userId + '">' +
+                '<option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>Админ</option>' +
+                '<option value="user"' + (u.role === 'user' ? ' selected' : '') + '>Пользователь</option>' +
+                '<option value="none"' + (u.role === 'none' ? ' selected' : '') + '>Нет доступа</option>' +
+              '</select>' +
+              '<button type="button" class="btn-delete-user" data-user-id="' + u.userId + '">Удалить</button>';
+            list.appendChild(row);
+            row.querySelector('.btn-delete-user').addEventListener('click', function() {
+              var targetUserId = this.dataset.userId;
+              var name = u.name || ('ID ' + u.userId);
+              confirmAction('Удалить пользователя «' + name + '»? Он потеряет доступ к приложению.', function() {
+                api('DELETE', '/api/users/' + targetUserId)
+                  .then(function() {
+                    document.getElementById('usersError').textContent = '';
+                    loadUsers();
+                  })
+                  .catch(function(err) {
+                    document.getElementById('usersError').textContent = err.message;
+                  });
+              });
+            });
+            var selectEl = row.querySelector('select');
+            var userName = u.name || ('ID ' + u.userId);
+            var prevRole = u.role;
+            selectEl.addEventListener('change', function() {
+              var userId = this.dataset.userId;
+              var role = this.value;
+              var roleLabel = roleLabels[role] || role;
+              var sel = this;
+              confirmAction(
+                'Изменить права доступа для «' + userName + '» на «' + roleLabel + '»? Пользователю придёт уведомление в Telegram.',
+                function() {
+                  api('PUT', '/api/users/' + userId, { role: role })
+                    .then(function() {
+                      document.getElementById('usersError').textContent = '';
+                      prevRole = role;
+                    })
+                    .catch(function(err) {
+                      document.getElementById('usersError').textContent = err.message;
+                      sel.value = prevRole;
+                    });
+                },
+                function() {
+                  sel.value = prevRole;
+                }
+              );
+            });
+          });
+          if (users.length === 0) list.innerHTML = '<p class="empty-state">Нет пользователей.</p>';
+        }).catch(err => {
+          document.getElementById('usersLoading').style.display = 'none';
+          document.getElementById('usersError').textContent = err.message;
+        });
+      }
+
+      function loadHistory() {
+        document.getElementById('historyError').textContent = '';
+        document.getElementById('historyLoading').style.display = 'flex';
+        document.getElementById('historyList').innerHTML = '';
+        const projectId = document.getElementById('historyProjectFilter').value || '';
+        const url = projectId ? '/api/history?projectId=' + encodeURIComponent(projectId) : '/api/history';
+        api('GET', url).then(data => {
+          document.getElementById('historyLoading').style.display = 'none';
+          const entries = data.history || [];
+          const list = document.getElementById('historyList');
+          entries.forEach(e => {
+            const row = document.createElement('div');
+            row.className = 'history-row';
+            row.innerHTML =
+              '<div class="history-meta">' + escapeHtml(e.date) + ' · ' + escapeHtml(e.userName) + (e.projectId ? ' · ' + escapeHtml(e.projectId) : '') + '</div>' +
+              '<div>' + escapeHtml(e.actionText) + '</div>';
+            list.appendChild(row);
+          });
+          if (entries.length === 0) list.innerHTML = '<p class="empty-state">Нет записей.</p>';
+        }).catch(err => {
+          document.getElementById('historyLoading').style.display = 'none';
+          document.getElementById('historyError').textContent = err.message;
+        });
+      }
+
+      function loadTemplates() {
+        document.getElementById('templatesError').textContent = '';
+        api('GET', '/api/templates').then(function(data) {
+          templatesCache = data.templates || [];
+          const list = document.getElementById('templatesList');
+          list.innerHTML = '';
+          templatesCache.forEach(function(t) {
+            const row = document.createElement('div');
+            row.className = 'template-row';
+            row.innerHTML =
+              '<span><strong>' + escapeHtml(t.name) + '</strong></span>' +
+              '<span class="template-link" title="' + escapeHtml(t.link) + '">' + escapeHtml(t.link) + '</span>' +
+              '<button type="button" class="btn-delete-template" data-id="' + t.id + '">Удалить</button>';
+            list.appendChild(row);
+            row.querySelector('.btn-delete-template').addEventListener('click', function() {
+              const id = this.dataset.id;
+              api('DELETE', '/api/templates/' + id).then(function() { loadTemplates(); }).catch(function(err) {
+                document.getElementById('templatesError').textContent = err.message;
+              });
+            });
+          });
+          if (templatesCache.length === 0) list.innerHTML = '<p class="empty-state">Нет шаблонов. Добавьте первый.</p>';
+        }).catch(function(err) {
+          document.getElementById('templatesError').textContent = err.message;
         });
       }
 
@@ -331,61 +578,65 @@
         document.getElementById('dataError').textContent = '';
         document.getElementById('dataLoading').style.display = 'flex';
         document.getElementById('fieldsList').innerHTML = '';
-        api('GET', '/api/projects/' + encodeURIComponent(projectId) + '/data')
-          .then(data => {
-            document.getElementById('dataLoading').style.display = 'none';
-            const list = document.getElementById('fieldsList');
-            if (typeof data !== 'object' || data === null) {
-              list.innerHTML = '<p>Нет полей или данные не объект.</p>';
-              return;
+        Promise.all([
+          api('GET', '/api/projects/' + encodeURIComponent(projectId) + '/data'),
+          api('GET', '/api/templates')
+        ]).then(function(results) {
+          const data = results[0];
+          const templates = (results[1] && results[1].templates) ? results[1].templates : [];
+          document.getElementById('dataLoading').style.display = 'none';
+          const list = document.getElementById('fieldsList');
+          if (typeof data !== 'object' || data === null) {
+            list.innerHTML = '<p>Нет полей или данные не объект.</p>';
+            return;
+          }
+          if (!initialFieldValues[projectId]) initialFieldValues[projectId] = {};
+          Object.keys(data).forEach(key => {
+            const val = data[key];
+            const str = typeof val === 'object' ? JSON.stringify(val) : String(val);
+            initialFieldValues[projectId][key] = str;
+            const block = document.createElement('div');
+            block.className = 'field-block';
+            var selectOpts = '<option value="">— Ссылка из шаблона —</option>';
+            function escapeAttr(s) {
+              var d = document.createElement('div');
+              d.textContent = s;
+              return d.innerHTML.replace(/"/g, '&quot;').replace(/&/g, '&amp;');
             }
-            Object.keys(data).forEach(key => {
-              const val = data[key];
-              const str = typeof val === 'object' ? JSON.stringify(val) : String(val);
-              const block = document.createElement('div');
-              block.className = 'field-block';
-              block.innerHTML =
-                '<span class="field-name">' + escapeHtml(key) + '</span>' +
-                '<textarea data-field="' + escapeHtml(key) + '" rows="4">' + escapeHtml(str) + '</textarea>' +
-                '<div class="field-actions">' +
-                  '<button type="button" class="btn-save">Сохранить</button>' +
-                  '<button type="button" class="btn-clear">Очистить</button>' +
-                '</div>';
-              list.appendChild(block);
-              block.querySelector('.btn-save').addEventListener('click', () => {
-                const ta = block.querySelector('textarea');
-                const saveBtn = block.querySelector('.btn-save');
-                const clearBtn = block.querySelector('.btn-clear');
-                confirmAction('Сохранить изменения?', function() {
-                  saveBtn.disabled = true;
-                  clearBtn.disabled = true;
-                  saveField(projectId, ta.dataset.field, ta.value).finally(function() {
-                    saveBtn.disabled = false;
-                    clearBtn.disabled = false;
-                  });
-                });
-              });
-              block.querySelector('.btn-clear').addEventListener('click', () => {
-                const ta = block.querySelector('textarea');
-                const saveBtn = block.querySelector('.btn-save');
-                const clearBtn = block.querySelector('.btn-clear');
-                confirmAction('Очистить поле?', function() {
-                  saveBtn.disabled = true;
-                  clearBtn.disabled = true;
-                  ta.value = '';
-                  saveField(projectId, ta.dataset.field, '').finally(function() {
-                    saveBtn.disabled = false;
-                    clearBtn.disabled = false;
-                  });
+            templates.forEach(function(t, idx) {
+              selectOpts += '<option value="' + idx + '" data-link="' + escapeAttr(t.link) + '">' + escapeHtml(t.name) + '</option>';
+            });
+            block.innerHTML =
+              '<span class="field-name">' + escapeHtml(key) + '</span>' +
+              '<textarea data-field="' + escapeHtml(key) + '" rows="4">' + escapeHtml(str) + '</textarea>' +
+              '<div class="field-actions field-template-row">' +
+                '<select class="template-select">' + selectOpts + '</select>' +
+                '<button type="button" class="btn-save">Сохранить</button>' +
+              '</div>';
+            list.appendChild(block);
+            block.querySelector('.template-select').addEventListener('change', function() {
+              var opt = this.options[this.selectedIndex];
+              var link = opt && opt.getAttribute('data-link');
+              if (link) block.querySelector('textarea').value = link;
+            });
+            block.querySelector('.btn-save').addEventListener('click', () => {
+              const ta = block.querySelector('textarea');
+              const saveBtn = block.querySelector('.btn-save');
+              const oldVal = (initialFieldValues[projectId] && initialFieldValues[projectId][ta.dataset.field]) || '';
+              confirmAction('Сохранить изменения?', function() {
+                saveBtn.disabled = true;
+                saveField(projectId, ta.dataset.field, ta.value, oldVal).finally(function() {
+                  saveBtn.disabled = false;
+                  if (initialFieldValues[projectId]) initialFieldValues[projectId][ta.dataset.field] = ta.value;
                 });
               });
             });
-            if (Object.keys(data).length === 0) list.innerHTML = '<p>Пусто.</p>';
-          })
-          .catch(err => {
-            document.getElementById('dataLoading').style.display = 'none';
-            document.getElementById('dataError').textContent = err.message;
           });
+          if (Object.keys(data).length === 0) list.innerHTML = '<p>Пусто.</p>';
+        }).catch(err => {
+          document.getElementById('dataLoading').style.display = 'none';
+          document.getElementById('dataError').textContent = err.message;
+        });
       }
 
       function escapeHtml(s) {
@@ -394,15 +645,37 @@
         return div.innerHTML;
       }
 
-      function confirmAction(message, onOk) {
+      function confirmAction(message, onOk, onCancel) {
         if (window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.showConfirm === 'function') {
-          Telegram.WebApp.showConfirm(message, function(ok) { if (ok) onOk(); });
+          Telegram.WebApp.showConfirm(message, function(ok) { if (ok) onOk(); else if (onCancel) onCancel(); });
         } else {
-          if (window.confirm(message)) onOk();
+          if (window.confirm(message)) onOk(); else if (onCancel) onCancel();
         }
       }
 
-      function saveField(projectId, fieldName, value) {
+      (function enablePaste() {
+        var isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || ('ontouchstart' in document.documentElement);
+        if (!isMobile) return;
+        document.addEventListener('paste', function(e) {
+          var el = e.target;
+          if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
+          var text = null;
+          if (e.clipboardData && e.clipboardData.getData) {
+            text = e.clipboardData.getData('text/plain');
+          } else if (window.clipboardData && window.clipboardData.getData) {
+            text = window.clipboardData.getData('Text');
+          }
+          if (!text) return;
+          e.preventDefault();
+          var start = el.selectionStart != null ? el.selectionStart : el.value.length;
+          var end = el.selectionEnd != null ? el.selectionEnd : el.value.length;
+          var val = el.value || '';
+          el.value = val.substring(0, start) + text + val.substring(end);
+          el.selectionStart = el.selectionEnd = start + text.length;
+        }, true);
+      })();
+
+      function saveField(projectId, fieldName, value, oldValue) {
         let valueJson = value.trim();
         if (!valueJson.startsWith('{') && !valueJson.startsWith('[') && valueJson !== 'null') {
           if (valueJson === 'true' || valueJson === 'false') valueJson = valueJson;
@@ -410,7 +683,10 @@
           else valueJson = JSON.stringify(valueJson);
         }
         document.getElementById('dataError').textContent = '';
-        return api('PUT', '/api/projects/' + encodeURIComponent(projectId) + '/data/' + encodeURIComponent(fieldName), valueJson)
+        var path = '/api/projects/' + encodeURIComponent(projectId) + '/data/' + encodeURIComponent(fieldName);
+        if (oldValue !== undefined && oldValue !== null && String(oldValue).length > 0)
+          path += '?oldValue=' + encodeURIComponent(String(oldValue));
+        return api('PUT', path, valueJson)
           .then(() => loadData(projectId))
           .catch(err => {
             document.getElementById('dataError').textContent = err.message;
@@ -483,7 +759,73 @@
           .finally(() => { btn.disabled = false; });
       });
 
-      loadProjects();
+      document.getElementById('requestAccessBtn').addEventListener('click', function() {
+        var btn = this;
+        document.getElementById('requestAccessError').textContent = '';
+        btn.disabled = true;
+        api('POST', '/api/access-request')
+          .then(function() {
+            showScreen('accessRequestedScreen');
+          })
+          .catch(function(err) {
+            document.getElementById('requestAccessError').textContent = err.message;
+            btn.disabled = false;
+          });
+      });
+
+      document.getElementById('addTemplateBtn').addEventListener('click', function() {
+        var nameEl = document.getElementById('templateNameInput');
+        var linkEl = document.getElementById('templateLinkInput');
+        var errEl = document.getElementById('templatesError');
+        var name = nameEl.value.trim();
+        var link = linkEl.value.trim();
+        errEl.textContent = '';
+        if (!name) {
+          errEl.textContent = 'Введите название.';
+          return;
+        }
+        this.disabled = true;
+        api('POST', '/api/templates', { name: name, link: link })
+          .then(function() {
+            nameEl.value = '';
+            linkEl.value = '';
+            loadTemplates();
+          })
+          .catch(function(err) { errEl.textContent = err.message; })
+          .finally(function() { document.getElementById('addTemplateBtn').disabled = false; });
+      });
+
+      document.getElementById('tabsBar').addEventListener('click', function(ev) {
+        var t = ev.target && ev.target.dataset && ev.target.dataset.tab;
+        if (t) switchTab(t);
+      });
+      document.getElementById('historyProjectFilter').addEventListener('change', loadHistory);
+
+      api('GET', '/api/me').then(function(meData) {
+        me = meData;
+        if (me.role === 'none' && !me.accessRequested) {
+          showScreen('noAccessScreen');
+          return;
+        }
+        if (me.role === 'none' && me.accessRequested) {
+          showScreen('accessRequestedScreen');
+          return;
+        }
+        showScreen('mainAppScreen');
+        if (me.role === 'admin') {
+          document.getElementById('tabsBar').style.display = 'flex';
+          document.getElementById('tabFirebase').style.display = 'block';
+          document.getElementById('tabTemplates').style.display = 'none';
+          document.getElementById('tabUsers').style.display = 'none';
+          document.getElementById('tabHistory').style.display = 'none';
+        } else {
+          document.getElementById('tabsBar').style.display = 'none';
+          document.getElementById('tabFirebase').style.display = 'block';
+        }
+        loadProjects();
+      }).catch(function(err) {
+        setStatus('Ошибка: ' + err.message);
+      });
     })();
   </script>
 </body>

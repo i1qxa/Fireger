@@ -1,90 +1,107 @@
 # Firebase Manager — Telegram Bot и Mini App
 
-Telegram-бот на Kotlin с веб-приложением (Mini App): управление Firebase Realtime Database — добавление проектов по ключу, правила безопасности, поля в базе. Обновления приходят по **webhook**, основная работа — в **Mini App** в Telegram.
+Telegram-бот на Kotlin с веб-приложением (Mini App): управление Firebase Realtime Database — проекты по ключу сервисного аккаунта, правила безопасности, поля в корне БД. Роли доступа (админ / пользователь), шаблоны ссылок, история действий. Обновления приходят по **webhook**, основная работа — в **Mini App** в Telegram.
 
 ## Возможности
 
-- **Webhook**: Telegram шлёт обновления на ваш HTTPS URL.
-- **Mini App**: кнопка меню бота открывает веб-приложение; ключ, проекты, правила и поля редактируются в нём.
-- В чате: `/start` — приветствие и кнопка «Открыть приложение»; остальные команды по желанию (можно оставить только редирект в Mini App).
+- **Webhook**: Telegram шлёт обновления на HTTPS URL; при старте приложение само регистрирует webhook и кнопку меню.
+- **Mini App**: кнопка меню бота открывает веб-приложение. В приложении:
+  - **Firebase** — список проектов (общий для всех с доступом), добавление по ключу, правила чтения/записи, поля в корне RTDB. В полях можно подставлять ссылки из шаблонов.
+  - **Шаблоны** (только админ) — создание шаблонов «название + ссылка» для быстрой подстановки в поля.
+  - **Пользователи** (только админ) — список пользователей, смена роли (админ / пользователь / нет доступа), удаление; при смене прав пользователю уходит уведомление в Telegram.
+  - **История** (только админ) — лог изменений правил и полей по проектам.
+- **Роли**: первый пользователь становится админом; остальные по умолчанию «нет доступа» и могут запросить доступ. Админ выдаёт права. Если в системе не остаётся ни одного админа, админом становится первый по id пользователь.
+- **В чате бота**: `/start`, `/projects`, `/rules`, `/link` — работа с проектами и правилами.
 
 ## Требования
 
-- Java 17+
+- Java 17+ (для локального запуска) или Docker
 - Токен бота от [@BotFather](https://t.me/BotFather)
-- Публичный HTTPS URL для webhook (например через [ngrok](https://ngrok.com))
+- Публичный HTTPS URL для webhook (ngrok, домен с TLS и т.п.)
 
-## Запуск (webhook + Mini App)
+## Запуск
 
-1. Создайте бота в [@BotFather](https://t.me/BotFather) и скопируйте токен.
+### Вариант 1: Docker (рекомендуется)
 
-2. Запустите туннель с HTTPS (например ngrok):
+1. Создайте бота в [@BotFather](https://t.me/BotFather), скопируйте токен.
+2. Образ на Docker Hub: `i1qxa/firebase-manager:1.0`
+
+   Скачать и запустить:
+
    ```bash
-   ngrok http 8080
+   docker pull i1qxa/firebase-manager:1.0
+   docker run -d --name firebase-manager \
+     -e BOT_TOKEN=ваш_токен \
+     -e WEBHOOK_BASE_URL=https://ваш-публичный-url \
+     -p 8080:8080 \
+     -v firebase-manager-data:/app/data \
+     i1qxa/firebase-manager:1.0
    ```
-   Скопируйте выданный URL, например `https://xxxx.ngrok.io`.
 
-3. Укажите переменные окружения и запустите приложение:
+   Данные БД хранятся в volume `firebase-manager-data` и сохраняются при перезапуске контейнера.
+
+### Вариант 2: Сборка образа из исходников
+
+```bash
+docker build -t firebase-manager:1.0 .
+docker run -d --name firebase-manager \
+  -e BOT_TOKEN=ваш_токен \
+  -e WEBHOOK_BASE_URL=https://ваш-публичный-url \
+  -p 8080:8080 \
+  -v firebase-manager-data:/app/data \
+  firebase-manager:1.0
+```
+
+### Вариант 3: Локально без Docker
+
+1. Туннель HTTPS (например ngrok): `ngrok http 8080`, скопируйте URL.
+2. Запуск:
    ```bash
    export BOT_TOKEN=ваш_токен
-   export WEBHOOK_BASE_URL=https://xxxx.ngrok.io
-   # опционально: PORT=8080 (по умолчанию 8080)
+   export WEBHOOK_BASE_URL=https://ваш-url
    ./gradlew run
    ```
-   Сервер поднимется на `0.0.0.0:8080`, зарегистрирует webhook и кнопку меню «Открыть приложение» с URL `{WEBHOOK_BASE_URL}/app`.
+   Или после `./gradlew installDist`:
+   ```bash
+   BOT_TOKEN=... WEBHOOK_BASE_URL=... ./build/install/firebase-manager/bin/firebase-manager
+   ```
 
-4. В Telegram откройте бота, нажмите кнопку меню (или отправьте `/start` и кнопку) и откройте Mini App. Добавьте ключ сервисного аккаунта, управляйте проектами, правилами и полями в корне RTDB.
-
-## Использование
-
-- **Ключ** — отправьте одним сообщением полный JSON сервисного ключа (как в Firebase Console → Project Settings → Service Accounts → Generate new private key). Проект будет добавлен, ссылка на БД подставится по умолчанию.
-
-- **Команды:**
-  - `/start` — приветствие и подсказки
-  - `/projects` — список добавленных проектов
-  - `/rules` — выбрать проект → показать правила → кнопка «Изменить правила»; после нажатия отправьте новый JSON правил сообщением
-  - `/link` — выбрать проект → показать текущую ссылку на БД → кнопка «Изменить ссылку»; после нажатия отправьте новую ссылку (например `https://PROJECT_ID-default-rtdb.firebaseio.com/`)
+Сервер слушает `0.0.0.0:8080`. Webhook и кнопка меню регистрируются при старте по `WEBHOOK_BASE_URL` (webhook: `{URL}/webhook`, Mini App: `{URL}/app`).
 
 ## Конфигурация
 
-- **Переменные окружения**: `BOT_TOKEN` (обязательно), `WEBHOOK_BASE_URL` (обязательно для webhook, HTTPS), `PORT` (по умолчанию 8080).
-- Сессии и проекты хранятся **в памяти** (ключ по Telegram user id); таймаут 30 минут без активности. Ключи на диск не сохраняются.
-- Для продакшена нужен постоянный HTTPS (не только ngrok) и при необходимости настройка Mini App в BotFather.
-
-## Структура проекта
-
-```
-src/main/kotlin/com/firebasemanager/
-├── Application.kt           # Точка входа, Ktor-сервер, webhook, /app, /api
-├── bot/
-│   ├── BotState.kt
-│   ├── TelegramBot.kt      # processUpdate, setWebhook, setChatMenuButton
-│   └── UserSession.kt
-├── routes/
-│   └── MiniAppApiRoutes.kt  # /api/projects, rules, data; проверка initData
-├── webapp/
-│   └── TelegramInitData.kt  # Проверка подписи Telegram Web App initData
-├── firebase/, models/, services/
-src/main/resources/static/app/
-└── index.html               # Mini App: ключ, проекты, правила, поля
-```
+- **Переменные окружения**: `BOT_TOKEN` (обязательно), `WEBHOOK_BASE_URL` (обязательно, HTTPS), `PORT` (по умолчанию 8080).
+- **Хранение**: данные в H2 (файловая БД в каталоге `data/` относительно рабочей директории): проекты, пользователи, история, шаблоны ссылок. При смене адреса сервера достаточно перезапустить приложение с новым `WEBHOOK_BASE_URL` — webhook обновится автоматически, в BotFather ничего менять не нужно.
 
 ## Сборка
 
 ```bash
 ./gradlew build
+./gradlew installDist   # для запуска без Docker: build/install/firebase-manager/
 ```
 
-Запуск без Gradle (после сборки):
+## Структура проекта
 
-```bash
-BOT_TOKEN=ваш_токен ./build/install/firebase-manager/bin/firebase-manager
+```
+src/main/kotlin/com/firebasemanager/
+├── Application.kt              # Точка входа, Ktor, webhook, /app, /api
+├── bot/
+│   ├── BotState.kt
+│   └── TelegramBot.kt         # setWebhook, setChatMenuButton, обработка команд
+├── db/                         # H2, Exposed: проекты, пользователи, история, шаблоны
+├── routes/
+│   └── MiniAppApiRoutes.kt     # /api/me, projects, users, history, templates, rules, data
+├── webapp/
+│   └── TelegramInitData.kt    # Проверка подписи initData Mini App
+├── firebase/, models/, services/
+src/main/resources/static/app/
+└── index.html                  # Mini App: вкладки Firebase, Шаблоны, Пользователи, История
 ```
 
 ## Безопасность
 
 - Храните `BOT_TOKEN` и ключи сервисных аккаунтов в безопасности.
-- Рекомендуется не передавать ключи в чатах; бот рассчитан на личное использование в вашем чате с ботом.
+- Не передавайте токен и ключи в открытых чатах.
 
 ## Лицензия
 
