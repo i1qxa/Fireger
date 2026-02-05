@@ -5,12 +5,82 @@ import com.google.auth.oauth2.GoogleCredentials
 import com.google.firebase.database.DatabaseReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.SecureRandom
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
 
 object RulesService {
+
+    private val tlsSocketFactory by lazy {
+        SSLContext.getInstance("TLSv1.2").apply { init(null, null, SecureRandom()) }.socketFactory
+    }
+
+    private fun openConnection(url: URL): HttpURLConnection {
+        val connection = url.openConnection() as HttpURLConnection
+        if (connection is HttpsURLConnection) {
+            connection.sslSocketFactory = tlsSocketFactory
+        }
+        return connection
+    }
+
+    private fun credentialsFromJson(serviceAccountJson: String): GoogleCredentials =
+        GoogleCredentials.fromStream(ByteArrayInputStream(serviceAccountJson.toByteArray(Charsets.UTF_8)))
+            .createScoped(listOf(
+                "https://www.googleapis.com/auth/firebase.database",
+                "https://www.googleapis.com/auth/userinfo.email"
+            ))
+
+    /** Загрузка правил по ключу из памяти (для сессий бота). */
+    suspend fun getRules(projectId: String, databaseUrl: String, serviceAccountJson: String): String = withContext(Dispatchers.IO) {
+        val credentials = credentialsFromJson(serviceAccountJson)
+        credentials.refreshIfExpired()
+        val accessToken = credentials.accessToken.tokenValue
+        val baseUrl = databaseUrl.removeSuffix("/")
+        val rulesUrl = "$baseUrl/.settings/rules.json?access_token=$accessToken"
+        val url = URL(rulesUrl)
+        val connection = openConnection(url)
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 5000
+        connection.readTimeout = 5000
+        val responseCode = connection.responseCode
+        val responseBody = try {
+            if (connection.inputStream != null) connection.inputStream.bufferedReader().use { it.readText() }
+            else connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+        } catch (e: Exception) { "" }
+        if (responseCode == HttpURLConnection.HTTP_OK) responseBody
+        else throw RuntimeException("Failed to fetch rules: HTTP $responseCode - $responseBody")
+    }
+
+    /** Обновление правил по ключу из памяти (для сессий бота). */
+    suspend fun updateRules(projectId: String, databaseUrl: String, serviceAccountJson: String, rules: String): Unit = withContext(Dispatchers.IO) {
+        val credentials = credentialsFromJson(serviceAccountJson)
+        credentials.refreshIfExpired()
+        val accessToken = credentials.accessToken.tokenValue
+        val baseUrl = databaseUrl.removeSuffix("/")
+        val rulesUrl = "$baseUrl/.settings/rules.json?access_token=$accessToken"
+        val url = URL(rulesUrl)
+        val connection = openConnection(url)
+        connection.requestMethod = "PUT"
+        connection.setRequestProperty("Content-Type", "application/json")
+        connection.doOutput = true
+        connection.connectTimeout = 15000
+        connection.readTimeout = 15000
+        val rulesJson = if (rules.trim().startsWith("{")) rules else "{\"rules\": $rules}"
+        connection.outputStream.use { it.write(rulesJson.toByteArray(Charsets.UTF_8)) }
+        val responseCode = connection.responseCode
+        val responseBody = try {
+            if (connection.inputStream != null) connection.inputStream.bufferedReader().use { it.readText() }
+            else connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+        } catch (e: Exception) { "" }
+        if (responseCode !in 200..299) throw RuntimeException("Failed to update rules: HTTP $responseCode - $responseBody")
+        if (responseBody.contains("\"error\"")) throw RuntimeException("Firebase API error: $responseBody")
+    }
+
     suspend fun getRules(projectId: String): String = withContext(Dispatchers.IO) {
         try {
             // Firebase Admin SDK не предоставляет прямой API для правил
@@ -43,7 +113,7 @@ object RulesService {
             val rulesUrl = "$baseUrl/.settings/rules.json?access_token=$accessToken"
             
             val url = URL(rulesUrl)
-            val connection = url.openConnection() as HttpURLConnection
+            val connection = openConnection(url)
             connection.requestMethod = "GET"
             connection.connectTimeout = 5000
             connection.readTimeout = 5000
@@ -119,7 +189,7 @@ object RulesService {
             val rulesUrl = "$baseUrl/.settings/rules.json"
             
             val url = URL(rulesUrl)
-            val connection = url.openConnection() as HttpURLConnection
+            val connection = openConnection(url)
             connection.requestMethod = "PUT"
             connection.setRequestProperty("Content-Type", "application/json")
             connection.doOutput = true
@@ -129,7 +199,7 @@ object RulesService {
             // Добавляем access_token в query параметр (согласно документации Firebase)
             val urlWithToken = "$rulesUrl?access_token=$accessToken"
             val finalUrl = URL(urlWithToken)
-            val finalConnection = finalUrl.openConnection() as HttpURLConnection
+            val finalConnection = openConnection(finalUrl)
             finalConnection.requestMethod = "PUT"
             finalConnection.setRequestProperty("Content-Type", "application/json")
             finalConnection.doOutput = true
@@ -215,7 +285,7 @@ object RulesService {
         val accessToken = credentials.accessToken.tokenValue
         
         val url = URL("$rulesUrl?access_token=$accessToken")
-        val connection = url.openConnection() as HttpURLConnection
+        val connection = openConnection(url)
         connection.requestMethod = "PUT"
         connection.setRequestProperty("Content-Type", "application/json")
         connection.doOutput = true

@@ -13,7 +13,7 @@ repositories {
 
 dependencies {
     // Telegram Bot API
-    implementation("com.github.pengrad:java-telegram-bot-api:5.0.1")
+    implementation("com.github.pengrad:java-telegram-bot-api:6.9.0")
     
     // Firebase Admin SDK
     implementation("com.google.firebase:firebase-admin:9.2.0")
@@ -26,6 +26,9 @@ dependencies {
     
     // Coroutines (for suspend RulesService)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+    
+    // OkHttp for Firebase REST (reliable TLS)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     
     testImplementation(kotlin("test"))
 }

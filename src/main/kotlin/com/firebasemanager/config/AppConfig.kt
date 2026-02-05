@@ -14,7 +14,7 @@ object AppConfig {
     
     fun loadProjects(): List<ProjectConfig> {
         val configFile = File(CONFIG_FILE)
-        return if (configFile.exists()) {
+        val rawList = if (configFile.exists()) {
             try {
                 val content = configFile.readText()
                 val config = json.decodeFromString<ProjectsConfig>(content)
@@ -26,6 +26,13 @@ object AppConfig {
         } else {
             emptyList()
         }
+        // Оставляем только проекты, у которых есть файл ключа
+        val valid = rawList.filter { File(it.serviceAccountPath).exists() }
+        if (valid.size < rawList.size) {
+            saveProjects(valid)
+            println("Removed ${rawList.size - valid.size} project(s) with missing key files from config")
+        }
+        return valid
     }
     
     fun saveProjects(projects: List<ProjectConfig>) {
