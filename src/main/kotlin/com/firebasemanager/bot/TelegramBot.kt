@@ -1,25 +1,34 @@
 package com.firebasemanager.bot
 
+import com.firebasemanager.db.getProject
+import com.firebasemanager.db.insertProject
+import com.firebasemanager.db.listProjectsByUser
 import com.firebasemanager.firebase.FirebaseManager
 import com.firebasemanager.services.RtdbDataService
 import com.firebasemanager.services.RulesService
 import com.pengrad.telegrambot.TelegramBot
-import com.pengrad.telegrambot.UpdatesListener
 import com.pengrad.telegrambot.model.BotCommand
 import com.pengrad.telegrambot.model.CallbackQuery
+import com.pengrad.telegrambot.model.MenuButtonWebApp
 import com.pengrad.telegrambot.model.Update
+import com.pengrad.telegrambot.model.WebAppInfo
 import com.pengrad.telegrambot.request.SendMessage
+import com.pengrad.telegrambot.request.SetChatMenuButton
 import com.pengrad.telegrambot.request.SetMyCommands
+import com.pengrad.telegrambot.request.SetWebhook
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class FirebaseTelegramBot(token: String) {
+class FirebaseTelegramBot(
+    private val token: String,
+    private val webhookBaseUrl: String
+) {
 
     private val bot = TelegramBot(token)
-    private val sessions = mutableMapOf<Long, UserSession>()
-    private val sessionTimeoutMs = 30 * 60 * 1000L // 30 минут
+    /** Состояние диалога: ожидание ввода значения поля (команда /link). */
+    private val userState = mutableMapOf<Long, BotState>()
 
     fun start() {
         bot.execute(
@@ -30,32 +39,23 @@ class FirebaseTelegramBot(token: String) {
                 BotCommand("link", "Поля в Realtime Database")
             )
         )
-        bot.setUpdatesListener(UpdatesListener { updates ->
-            for (update in updates) {
-                try {
-                    handleUpdate(update)
-                } catch (e: Exception) {
-                    val chatId = update.message()?.chat()?.id() ?: update.callbackQuery()?.message()?.chat()?.id()
-                    sendSafe(chatId, "Ошибка: ${e.message}")
-                }
-            }
-            UpdatesListener.CONFIRMED_UPDATES_ALL
-        })
-        println("Firebase Telegram bot started (session timeout: 30 min).")
+        bot.execute(SetWebhook().url("$webhookBaseUrl/webhook"))
+        bot.execute(
+            SetChatMenuButton().menuButton(
+                MenuButtonWebApp("Открыть приложение", WebAppInfo("$webhookBaseUrl/app"))
+            )
+        )
     }
 
-    private fun getOrCreateSession(chatId: Long): UserSession {
-        var session = sessions[chatId]
-        if (session != null && session.isExpired(sessionTimeoutMs)) {
-            sessions.remove(chatId)
-            session = null
+    fun getBotToken(): String = token
+
+    fun processUpdate(update: Update) {
+        try {
+            handleUpdate(update)
+        } catch (e: Exception) {
+            val chatId = update.message()?.chat()?.id() ?: update.callbackQuery()?.message()?.chat()?.id()
+            sendSafe(chatId, "Ошибка: ${e.message}")
         }
-        if (session == null) {
-            session = UserSession(chatId = chatId)
-            sessions[chatId] = session
-        }
-        session.touch()
-        return session
     }
 
     private fun handleUpdate(update: Update) {
@@ -66,54 +66,53 @@ class FirebaseTelegramBot(token: String) {
         }
         val msg = update.message() ?: return
         val chatId = msg.chat().id()
-        val session = getOrCreateSession(chatId)
+        val userId = msg.from()?.id()?.toLong() ?: chatId
         val text = msg.text() ?: ""
 
         when {
-            text.startsWith("/") -> handleCommand(chatId, session, text.trim())
-            else -> handleText(chatId, session, text)
+            text.startsWith("/") -> handleCommand(chatId, userId, text.trim())
+            else -> handleText(chatId, userId, text)
         }
     }
 
-    private fun handleCommand(chatId: Long, session: UserSession, command: String) {
+    private fun handleCommand(chatId: Long, userId: Long, command: String) {
         val parts = command.split(" ", limit = 2)
         when (parts[0].lowercase()) {
-            "/start" -> sendSafe(chatId, """
-                Добро пожаловать в Firebase Manager Bot.
-                
-                У каждого пользователя свои проекты. Они хранятся только в памяти: если 30 минут не будет сообщений — сеанс сбросится и проекты нужно будет добавить снова.
-                
-                Отправьте ключ (JSON сервисного аккаунта) — проект добавится в текущий сеанс.
-                
-                Команды:
-                /projects — список ваших проектов в сеансе
-                /rules — права на чтение в Realtime Database
-                /link — поля в Realtime Database (field_a, field_b и т.д.)
-            """.trimIndent())
-            "/projects" -> sendProjectList(chatId, session)
+            "/start" -> {
+                val keyboard = com.pengrad.telegrambot.model.request.InlineKeyboardMarkup(
+                    arrayOf(
+                        com.pengrad.telegrambot.model.request.InlineKeyboardButton("Открыть приложение")
+                            .webApp(WebAppInfo("$webhookBaseUrl/app"))
+                    )
+                )
+                bot.execute(SendMessage(chatId, "Добро пожаловать. Нажмите кнопку ниже или откройте приложение через меню бота.").replyMarkup(keyboard))
+            }
+            "/projects" -> sendProjectList(chatId, userId)
             "/rules" -> {
-                if (session.projects.size == 1) {
-                    showRules(chatId, session, session.projects.keys.single())
+                val projects = listProjectsByUser(userId)
+                if (projects.size == 1) {
+                    showRules(chatId, userId, projects.single().projectId)
                 } else {
-                    sendProjectListForAction(chatId, session, "rules")
+                    sendProjectListForAction(chatId, userId, "rules")
                 }
             }
             "/link" -> {
-                if (session.projects.size == 1) {
-                    showLink(chatId, session, session.projects.keys.single())
+                val projects = listProjectsByUser(userId)
+                if (projects.size == 1) {
+                    showLink(chatId, userId, projects.single().projectId)
                 } else {
-                    sendProjectListForAction(chatId, session, "link")
+                    sendProjectListForAction(chatId, userId, "link")
                 }
             }
             else -> sendSafe(chatId, "Неизвестная команда. Доступны: /start, /projects, /rules, /link.")
         }
     }
 
-    private fun handleText(chatId: Long, session: UserSession, text: String) {
-        when (val state = session.state) {
+    private fun handleText(chatId: Long, userId: Long, text: String) {
+        when (val state = userState[userId]) {
             is BotState.AwaitingFieldValue -> {
-                session.state = null
-                val project = session.projects[state.projectId]
+                userState.remove(userId)
+                val project = getProject(userId, state.projectId)
                 if (project == null) {
                     sendSafe(chatId, "Проект не найден: ${state.projectId}")
                     return
@@ -123,7 +122,7 @@ class FirebaseTelegramBot(token: String) {
                         val valueJson = "\"${text.trim().replace("\\", "\\\\").replace("\"", "\\\"")}\""
                         RtdbDataService.setField(project.databaseUrl, project.serviceAccountJson, "", state.fieldName, valueJson)
                         sendSafe(chatId, "Поле ${state.fieldName} обновлено.")
-                        showLink(chatId, session, state.projectId)
+                        showLink(chatId, userId, state.projectId)
                     } catch (e: Exception) {
                         sendSafe(chatId, "Ошибка: ${e.message}")
                     }
@@ -134,7 +133,7 @@ class FirebaseTelegramBot(token: String) {
         }
 
         if (!text.trimStart().startsWith("{")) {
-            sendSafe(chatId, "Отправьте JSON ключа сервисного аккаунта или используйте команды /projects, /rules, /link")
+            sendSafe(chatId, "Отправьте JSON ключа сервисного аккаунта или используйте команды /projects, /rules, /link. Проекты можно добавить в приложении (меню бота).")
             return
         }
         try {
@@ -144,15 +143,13 @@ class FirebaseTelegramBot(token: String) {
                 return
             }
             val projectId = validation.projectId!!
+            if (getProject(userId, projectId) != null) {
+                sendSafe(chatId, "Проект уже добавлен: $projectId")
+                return
+            }
             val databaseUrl = "https://$projectId-default-rtdb.firebaseio.com/"
-            val project = InMemoryProject(
-                id = projectId,
-                displayName = projectId,
-                databaseUrl = databaseUrl,
-                serviceAccountJson = text.trim()
-            )
-            session.projects[projectId] = project
-            sendSafe(chatId, "Проект добавлен в сеанс: $projectId\nСсылка на БД: $databaseUrl\n(сеанс до 30 мин бездействия)")
+            insertProject(userId, projectId, null, projectId, null, "Development", text.trim())
+            sendSafe(chatId, "Проект добавлен: $projectId\nСсылка на БД: $databaseUrl")
         } catch (e: Exception) {
             sendSafe(chatId, "Не удалось добавить проект: ${e.message}")
         }
@@ -161,52 +158,52 @@ class FirebaseTelegramBot(token: String) {
     private fun handleCallback(callback: CallbackQuery) {
         val data = callback.data() ?: return
         val chatId = callback.message()?.chat()?.id() ?: return
-        val session = getOrCreateSession(chatId)
+        val userId = callback.from().id().toLong()
 
         when {
             data.startsWith("rules:") -> {
                 val projectId = data.removePrefix("rules:")
-                showRules(chatId, session, projectId)
+                showRules(chatId, userId, projectId)
             }
             data.startsWith("rules_set_read:") -> {
                 val rest = data.removePrefix("rules_set_read:")
                 val parts = rest.split(":", limit = 2)
-                if (parts.size == 2) setReadPermission(chatId, session, parts[0], parts[1] == "true")
+                if (parts.size == 2) setReadPermission(chatId, userId, parts[0], parts[1] == "true")
             }
             data.startsWith("link:") -> {
                 val projectId = data.removePrefix("link:")
-                showLink(chatId, session, projectId)
+                showLink(chatId, userId, projectId)
             }
             data.startsWith("link_edit_field:") -> {
                 val rest = data.removePrefix("link_edit_field:")
                 val parts = rest.split(":", limit = 2)
                 if (parts.size == 2) {
-                    session.state = BotState.AwaitingFieldValue(parts[0], parts[1])
+                    userState[userId] = BotState.AwaitingFieldValue(parts[0], parts[1])
                     sendSafe(chatId, "Введите новое значение для поля ${parts[1]}:")
                 }
             }
         }
     }
 
-    private fun sendProjectList(chatId: Long, session: UserSession) {
-        val projects = session.projects.values.toList()
+    private fun sendProjectList(chatId: Long, userId: Long) {
+        val projects = listProjectsByUser(userId)
         if (projects.isEmpty()) {
-            sendSafe(chatId, "В сеансе нет проектов. Отправьте ключ (JSON сервисного аккаунта). Сеанс — 30 мин бездействия.")
+            sendSafe(chatId, "Нет проектов. Добавьте проект в приложении (кнопка меню бота «Открыть приложение»).")
             return
         }
-        sendSafe(chatId, "Проекты в сеансе:\n" + projects.joinToString("\n") { "${it.id} — ${it.displayName}" })
+        sendSafe(chatId, "Проекты:\n" + projects.joinToString("\n") { "${it.projectId} — ${it.displayName}" })
     }
 
-    private fun sendProjectListForAction(chatId: Long, session: UserSession, action: String) {
-        val projects = session.projects.values.toList()
+    private fun sendProjectListForAction(chatId: Long, userId: Long, action: String) {
+        val projects = listProjectsByUser(userId)
         if (projects.isEmpty()) {
-            sendSafe(chatId, "В сеансе нет проектов. Отправьте ключ (JSON сервисного аккаунта).")
+            sendSafe(chatId, "Нет проектов. Добавьте проект в приложении (кнопка меню бота).")
             return
         }
         val prefix = if (action == "rules") "rules:" else "link:"
         val keyboard = com.pengrad.telegrambot.model.request.InlineKeyboardMarkup(
             *projects.map { p ->
-                arrayOf(com.pengrad.telegrambot.model.request.InlineKeyboardButton(p.id).callbackData(prefix + p.id))
+                arrayOf(com.pengrad.telegrambot.model.request.InlineKeyboardButton(p.projectId).callbackData(prefix + p.projectId))
             }.toTypedArray()
         )
         bot.execute(SendMessage(chatId, "Выберите проект:").replyMarkup(keyboard))
@@ -226,15 +223,15 @@ class FirebaseTelegramBot(token: String) {
         }
     }
 
-    private fun showRules(chatId: Long, session: UserSession, projectId: String) {
-        val project = session.projects[projectId]
+    private fun showRules(chatId: Long, userId: Long, projectId: String) {
+        val project = getProject(userId, projectId)
         if (project == null) {
             sendSafe(chatId, "Проект не найден: $projectId")
             return
         }
         runBlocking {
             try {
-                val rules = RulesService.getRules(project.id, project.databaseUrl, project.serviceAccountJson)
+                val rules = RulesService.getRules(project.projectId, project.databaseUrl, project.serviceAccountJson)
                 val (read, _) = parseReadWrite(rules)
                 val status = if (read) "🟢 разрешено" else "🔴 запрещено"
                 val button = if (read)
@@ -250,27 +247,27 @@ class FirebaseTelegramBot(token: String) {
         }
     }
 
-    private fun setReadPermission(chatId: Long, session: UserSession, projectId: String, read: Boolean) {
-        val project = session.projects[projectId] ?: run {
+    private fun setReadPermission(chatId: Long, userId: Long, projectId: String, read: Boolean) {
+        val project = getProject(userId, projectId) ?: run {
             sendSafe(chatId, "Проект не найден: $projectId")
             return
         }
         runBlocking {
             try {
-                val currentRules = RulesService.getRules(project.id, project.databaseUrl, project.serviceAccountJson)
+                val currentRules = RulesService.getRules(project.projectId, project.databaseUrl, project.serviceAccountJson)
                 val (_, write) = parseReadWrite(currentRules)
                 val newRules = """{"rules":{".read":$read,".write":$write}}"""
-                RulesService.updateRules(project.id, project.databaseUrl, project.serviceAccountJson, newRules)
+                RulesService.updateRules(project.projectId, project.databaseUrl, project.serviceAccountJson, newRules)
                 sendSafe(chatId, if (read) "Чтение разрешено." else "Чтение запрещено.")
-                showRules(chatId, session, projectId)
+                showRules(chatId, userId, projectId)
             } catch (e: Exception) {
                 sendSafe(chatId, "Ошибка: ${e.message}")
             }
         }
     }
 
-    private fun showLink(chatId: Long, session: UserSession, projectId: String) {
-        val project = session.projects[projectId]
+    private fun showLink(chatId: Long, userId: Long, projectId: String) {
+        val project = getProject(userId, projectId)
         if (project == null) {
             sendSafe(chatId, "Проект не найден: $projectId")
             return

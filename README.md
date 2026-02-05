@@ -1,34 +1,39 @@
-# Firebase Manager — Telegram Bot
+# Firebase Manager — Telegram Bot и Mini App
 
-Telegram-бот на Kotlin для управления Firebase Realtime Database: добавление проектов по ключу, просмотр и изменение правил безопасности и ссылок на базу.
+Telegram-бот на Kotlin с веб-приложением (Mini App): управление Firebase Realtime Database — добавление проектов по ключу, правила безопасности, поля в базе. Обновления приходят по **webhook**, основная работа — в **Mini App** в Telegram.
 
 ## Возможности
 
-- Добавление проекта: отправьте ключ (JSON сервисного аккаунта) текстовым сообщением
-- Просмотр и изменение правил безопасности Realtime Database
-- Просмотр и изменение ссылки на базу (Database URL)
-- Список проектов по команде
+- **Webhook**: Telegram шлёт обновления на ваш HTTPS URL.
+- **Mini App**: кнопка меню бота открывает веб-приложение; ключ, проекты, правила и поля редактируются в нём.
+- В чате: `/start` — приветствие и кнопка «Открыть приложение»; остальные команды по желанию (можно оставить только редирект в Mini App).
 
 ## Требования
 
 - Java 17+
 - Токен бота от [@BotFather](https://t.me/BotFather)
+- Публичный HTTPS URL для webhook (например через [ngrok](https://ngrok.com))
 
-## Запуск
+## Запуск (webhook + Mini App)
 
-1. Создайте бота в Telegram через [@BotFather](https://t.me/BotFather) и скопируйте токен.
+1. Создайте бота в [@BotFather](https://t.me/BotFather) и скопируйте токен.
 
-2. Укажите токен в переменной окружения и запустите:
+2. Запустите туннель с HTTPS (например ngrok):
+   ```bash
+   ngrok http 8080
+   ```
+   Скопируйте выданный URL, например `https://xxxx.ngrok.io`.
+
+3. Укажите переменные окружения и запустите приложение:
    ```bash
    export BOT_TOKEN=ваш_токен
+   export WEBHOOK_BASE_URL=https://xxxx.ngrok.io
+   # опционально: PORT=8080 (по умолчанию 8080)
    ./gradlew run
    ```
-   Или в одной строке:
-   ```bash
-   BOT_TOKEN=ваш_токен ./gradlew run
-   ```
+   Сервер поднимется на `0.0.0.0:8080`, зарегистрирует webhook и кнопку меню «Открыть приложение» с URL `{WEBHOOK_BASE_URL}/app`.
 
-3. В Telegram найдите бота и отправьте `/start`.
+4. В Telegram откройте бота, нажмите кнопку меню (или отправьте `/start` и кнопку) и откройте Mini App. Добавьте ключ сервисного аккаунта, управляйте проектами, правилами и полями в корне RTDB.
 
 ## Использование
 
@@ -42,25 +47,26 @@ Telegram-бот на Kotlin для управления Firebase Realtime Databa
 
 ## Конфигурация
 
-- Проекты хранятся в `projects.json` в рабочей директории.
-- Ключи сохраняются в `config/service-accounts/`.
-- Эти пути добавлены в `.gitignore` — не коммитьте их в репозиторий.
+- **Переменные окружения**: `BOT_TOKEN` (обязательно), `WEBHOOK_BASE_URL` (обязательно для webhook, HTTPS), `PORT` (по умолчанию 8080).
+- Сессии и проекты хранятся **в памяти** (ключ по Telegram user id); таймаут 30 минут без активности. Ключи на диск не сохраняются.
+- Для продакшена нужен постоянный HTTPS (не только ngrok) и при необходимости настройка Mini App в BotFather.
 
 ## Структура проекта
 
 ```
 src/main/kotlin/com/firebasemanager/
-├── Application.kt           # Точка входа, запуск бота
+├── Application.kt           # Точка входа, Ktor-сервер, webhook, /app, /api
 ├── bot/
-│   ├── BotState.kt         # Состояние диалога (ожидание правил/ссылки)
-│   └── TelegramBot.kt     # Обработка команд и сообщений
-├── config/
-│   └── AppConfig.kt        # Загрузка/сохранение projects.json
-├── firebase/
-│   ├── FirebaseManager.kt # Инициализация Firebase, валидация ключей
-│   └── FirebaseProject.kt
-├── models/                 # Модели (ProjectConfig и др.)
-└── services/               # ProjectService, RulesService
+│   ├── BotState.kt
+│   ├── TelegramBot.kt      # processUpdate, setWebhook, setChatMenuButton
+│   └── UserSession.kt
+├── routes/
+│   └── MiniAppApiRoutes.kt  # /api/projects, rules, data; проверка initData
+├── webapp/
+│   └── TelegramInitData.kt  # Проверка подписи Telegram Web App initData
+├── firebase/, models/, services/
+src/main/resources/static/app/
+└── index.html               # Mini App: ключ, проекты, правила, поля
 ```
 
 ## Сборка

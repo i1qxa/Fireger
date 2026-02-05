@@ -13,6 +13,9 @@ build/
 config/service-accounts/*.json
 projects.json
 
+# Local DB (Exposed/H2)
+data/
+
 # Logs
 *.log
 

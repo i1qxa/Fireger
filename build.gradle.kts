@@ -30,6 +30,18 @@ dependencies {
     // OkHttp for Firebase REST (reliable TLS)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     
+    // Ktor server
+    implementation("io.ktor:ktor-server-core:2.3.7")
+    implementation("io.ktor:ktor-server-netty:2.3.7")
+    implementation("io.ktor:ktor-server-content-negotiation:2.3.7")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.7")
+    
+    // Exposed + H2 (локальная БД проектов)
+    implementation("org.jetbrains.exposed:exposed-core:0.45.0")
+    implementation("org.jetbrains.exposed:exposed-dao:0.45.0")
+    implementation("org.jetbrains.exposed:exposed-jdbc:0.45.0")
+    implementation("com.h2database:h2:2.2.224")
+    
     testImplementation(kotlin("test"))
 }
 
