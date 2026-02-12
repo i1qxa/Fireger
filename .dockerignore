@@ -1,5 +1,6 @@
-# Build and IDE
+# Build and IDE (keep fat JAR for Docker)
 build/
+!build/libs/firebase-manager.jar
 .gradle/
 out/
 .idea/

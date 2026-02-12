@@ -1,23 +1,9 @@
-# Stage 1: build
-FROM eclipse-temurin:17-jdk AS build
-WORKDIR /workspace
-
-COPY gradlew .
-COPY gradle gradle
-COPY build.gradle.kts settings.gradle.kts gradle.properties ./
-RUN ./gradlew dependencies --no-daemon || true
-
-COPY src src
-RUN ./gradlew installDist --no-daemon -x test
-
-# Stage 2: runtime
+# Образ без сборки внутри: нужен уже собранный JAR (./gradlew shadowJar)
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 
-COPY --from=build /workspace/build/install/firebase-manager .
+COPY build/libs/firebase-manager.jar ./firebase-manager.jar
 
-EXPOSE 8080
+EXPOSE 8080 8443
 
-ENV PORT=8080
-
-ENTRYPOINT ["/app/bin/firebase-manager"]
+ENTRYPOINT ["java", "-jar", "firebase-manager.jar"]

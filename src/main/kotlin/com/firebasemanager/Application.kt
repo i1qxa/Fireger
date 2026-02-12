@@ -5,10 +5,15 @@ import com.firebasemanager.db.initDatabase
 import com.firebasemanager.routes.miniappApiRoutes
 import com.google.gson.Gson
 import com.pengrad.telegrambot.model.Update
+import io.ktor.network.tls.certificates.buildKeyStore
+import io.ktor.network.tls.certificates.saveToFile
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStarted
 import io.ktor.server.application.install
+import io.ktor.server.engine.applicationEngineEnvironment
+import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.engine.sslConnector
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.receiveText
@@ -23,25 +28,61 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import java.io.File
+
+private const val KEYSTORE_PASSWORD = "firebase-manager-keystore"
+private const val KEY_ALIAS = "firebase-manager"
 
 fun main() {
-    val token = System.getenv("BOT_TOKEN")
-        ?: throw IllegalStateException("Укажите переменную окружения BOT_TOKEN (токен бота от @BotFather)")
-    val webhookBaseUrl = System.getenv("WEBHOOK_BASE_URL")
-        ?: throw IllegalStateException("Укажите переменную окружения WEBHOOK_BASE_URL (HTTPS URL, например https://xxx.ngrok.io)")
-    val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
+    val defaultToken = "8526577591:AAEfDi-GQ7EqNWaSAVoqZgXufgN1-Nc4-FU"
+    val defaultWebhookBaseUrl = "https://91.228.155.82:8443"
+    val token = System.getenv("BOT_TOKEN") ?: defaultToken
+    val webhookBaseUrl = System.getenv("WEBHOOK_BASE_URL") ?: defaultWebhookBaseUrl
     val host = "0.0.0.0"
+
+    val keyStoreFile = File("keystore.jks")
+    val keyStore = if (keyStoreFile.exists()) {
+        java.security.KeyStore.getInstance("JKS").apply {
+            keyStoreFile.inputStream().use { load(it, KEYSTORE_PASSWORD.toCharArray()) }
+        }
+    } else {
+        buildKeyStore {
+            certificate(KEY_ALIAS) {
+                password = KEYSTORE_PASSWORD
+                domains = listOf("91.228.155.82", "176.113.83.188", "0.0.0.0", "localhost", "127.0.0.1")
+            }
+        }.also { it.saveToFile(keyStoreFile, KEYSTORE_PASSWORD) }
+    }
 
     initDatabase()
     val telegramBot = FirebaseTelegramBot(token, webhookBaseUrl)
 
-    val server = embeddedServer(Netty, port = port, host = host) {
-        configureRouting(telegramBot)
-        environment.monitor.subscribe(ApplicationStarted) {
-            telegramBot.start()
-            println("Firebase Manager: webhook and menu button set.")
+    val environment = applicationEngineEnvironment {
+        connector {
+            this.host = host
+            port = 8080
+        }
+        sslConnector(
+            keyStore = keyStore,
+            keyAlias = KEY_ALIAS,
+            keyStorePassword = { KEYSTORE_PASSWORD.toCharArray() },
+            privateKeyPassword = { KEYSTORE_PASSWORD.toCharArray() }
+        ) {
+            this.host = host
+            port = 8443
+            // TLS 1.2 only: avoids JDK TLS 1.3 bug "Insufficient buffer remaining for AEAD" with some clients (e.g. Telegram)
+            enabledProtocols = listOf("TLSv1.2")
+        }
+        module {
+            configureRouting(telegramBot)
+            environment.monitor.subscribe(ApplicationStarted) {
+                telegramBot.start()
+                println("Firebase Manager: HTTP 8080, HTTPS 8443; webhook and menu button set.")
+            }
         }
     }
+
+    val server = embeddedServer(Netty, environment) {}
     server.start(wait = true)
 }
 
