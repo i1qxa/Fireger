@@ -66,6 +66,68 @@ private data class TemplateListItem(val id: Int, val name: String, val link: Str
 @Serializable
 private data class TemplatesResponse(val templates: List<TemplateListItem>)
 
+@Serializable
+private data class ErrorResponse(val error: String)
+
+@Serializable
+private data class ProjectListItem(
+    val id: String,
+    val displayName: String,
+    val databaseUrl: String,
+    val name: String?,
+    val notionUrl: String?,
+    val status: String,
+    val bundleId: String?,
+    val developerId: Long?,
+    val developerName: String?
+)
+
+@Serializable
+private data class ProjectsResponse(val projects: List<ProjectListItem>)
+
+@Serializable
+private data class IdResponse(val id: String)
+
+@Serializable
+private data class CreateProjectResponse(val id: String, val databaseUrl: String, val name: String?, val notionUrl: String?, val status: String)
+
+@Serializable
+private data class SuccessResponse(val success: Boolean)
+
+@Serializable
+private data class RulesResponse(val read: Boolean)
+
+@Serializable
+private data class FieldResponse(val field: String)
+
+@Serializable
+private data class UserRoleResponse(val userId: Long, val role: String)
+
+@Serializable
+private data class UserIdResponse(val userId: Long)
+
+@Serializable
+private data class TemplateIdResponse(val id: Int)
+
+@Serializable
+private data class CreateProjectRequest(
+    val key: String,
+    val bundleId: String? = null,
+    val name: String? = null,
+    val notionUrl: String? = null,
+    val status: String? = null,
+    val developerId: String? = null
+)
+
+@Serializable
+private data class UpdateProjectRequest(
+    val name: String? = null,
+    val notionUrl: String? = null,
+    val status: String? = null,
+    val developerId: String? = null,
+    val bundleId: String? = null
+)
+
 private val ALLOWED_STATUSES = setOf("Development", "Ready", "Moderation", "Product", "Ban")
 
 /** Извлекает initData из заголовка X-Telegram-Init-Data или Authorization: tma <initData>. */
@@ -103,145 +165,182 @@ private fun roleLabel(role: String): String = when (role) {
 fun Routing.miniappApiRoutes(bot: FirebaseTelegramBot) {
     route("/api") {
             get("/me") {
-                val appUser = context.requireAppUser(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
-                    return@get
+                try {
+                    val appUser = context.requireAppUser(bot) ?: run {
+                        context.respond(HttpStatusCode.Unauthorized, ErrorResponse("Invalid or missing initData"))
+                        return@get
+                    }
+                    context.respond(MeResponse(
+                        userId = appUser.userId,
+                        role = appUser.role,
+                        name = appUser.name,
+                        avatarUrl = appUser.avatarUrl,
+                        accessRequested = appUser.accessRequested
+                    ))
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    context.respond(HttpStatusCode.InternalServerError, ErrorResponse(e.message ?: "Internal error"))
                 }
-                context.respond(MeResponse(
-                    userId = appUser.userId,
-                    role = appUser.role,
-                    name = appUser.name,
-                    avatarUrl = appUser.avatarUrl,
-                    accessRequested = appUser.accessRequested
-                ))
             }
             post("/access-request") {
                 val appUser = context.requireAppUser(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse("Invalid or missing initData"))
                     return@post
                 }
                 setAccessRequested(appUser.userId)
-                context.respond(HttpStatusCode.OK, mapOf("success" to true))
+                val initData = context.initDataOrNull()
+                val tgUser = initData?.let { TelegramInitData.validateAndGetUser(bot.getBotToken(), it) }
+                val userName = tgUser?.fullName ?: appUser.name ?: "—"
+                val userInfo = buildString {
+                    append("Пользователь просит доступ к приложению.\n\n")
+                    append("Имя: $userName\n")
+                    append("ID: ${appUser.userId}\n")
+                    tgUser?.username?.takeIf { it.isNotBlank() }?.let { append("Username: @$it\n") }
+                }
+                bot.sendMessageToAdmins(userInfo)
+                context.respond(HttpStatusCode.OK, SuccessResponse(true))
             }
             get("/projects") {
-                val userId = context.requireUserId(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
-                    return@get
+                try {
+                    val userId = context.requireUserId(bot) ?: run {
+                        context.respond(HttpStatusCode.Unauthorized, ErrorResponse("Invalid or missing initData"))
+                        return@get
+                    }
+                    if (!requireRoleNotNone(getAppUser(userId))) {
+                        context.respond(HttpStatusCode.Forbidden, ErrorResponse("Access denied"))
+                        return@get
+                    }
+                    var list = listAllProjects().map { p ->
+                        val developerName = p.developerId?.let { getAppUser(it)?.name }
+                        ProjectListItem(
+                            id = p.projectId,
+                            displayName = p.displayName,
+                            databaseUrl = p.databaseUrl,
+                            name = p.name,
+                            notionUrl = p.notionUrl,
+                            status = p.status,
+                            bundleId = p.bundleId,
+                            developerId = p.developerId,
+                            developerName = developerName
+                        )
+                    }
+                    val developerIdFilter = context.request.queryParameters["developerId"]?.toLongOrNull()
+                    val bundleIdFilter = context.request.queryParameters["bundleId"]?.trim()?.takeIf { it.isNotEmpty() }
+                    if (developerIdFilter != null) {
+                        list = list.filter { it.developerId == developerIdFilter }
+                    }
+                    if (bundleIdFilter != null) {
+                        list = list.filter { (it.bundleId ?: "").contains(bundleIdFilter, ignoreCase = true) }
+                    }
+                    context.respond(ProjectsResponse(projects = list))
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    context.respond(HttpStatusCode.InternalServerError, ErrorResponse(e.message ?: "Failed to load projects"))
                 }
-                if (!requireRoleNotNone(getAppUser(userId))) {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
-                    return@get
-                }
-                val list = listAllProjects().map { p ->
-                    mapOf(
-                        "id" to p.projectId,
-                        "displayName" to p.displayName,
-                        "databaseUrl" to p.databaseUrl,
-                        "name" to p.name,
-                        "notionUrl" to p.notionUrl,
-                        "status" to p.status
-                    )
-                }
-                context.respond(mapOf("projects" to list))
             }
             post("/projects") {
                 val userId = context.requireUserId(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse("Invalid or missing initData"))
                     return@post
                 }
                 if (!requireRoleNotNone(getAppUser(userId))) {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse("Access denied"))
                     return@post
                 }
-                val body = runCatching { context.receive<Map<String, String?>>() }.getOrNull()
-                val key = body?.get("key") ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing key"))
+                val body = runCatching { context.receive<CreateProjectRequest>() }.getOrNull() ?: run {
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid request body"))
                     return@post
                 }
+                val key = body.key
                 val validation = FirebaseManager.validateServiceAccount(key)
                 if (!validation.isValid) {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to (validation.error ?: "Invalid key")))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse(validation.error ?: "Invalid key"))
                     return@post
                 }
                 val projectId = validation.projectId!!
                 if (getProjectByProjectId(projectId) != null) {
-                    context.respond(HttpStatusCode.Conflict, mapOf("error" to "Проект с этим ключом уже добавлен. Один ключ Firebase — один проект в приложении."))
+                    context.respond(HttpStatusCode.Conflict, ErrorResponse("Проект с этим ключом уже добавлен. Один ключ Firebase — один проект в приложении."))
                     return@post
                 }
-                val bundleId = body["bundleId"]?.trim()?.takeIf { it.isNotEmpty() }
-                val name = body["name"]?.trim()?.takeIf { it.isNotEmpty() }
-                val notionUrl = body["notionUrl"]?.trim()?.takeIf { it.isNotEmpty() }
-                var status = body["status"]?.trim() ?: "Development"
+                val bundleId = body.bundleId?.trim()?.takeIf { it.isNotEmpty() }
+                val name = body.name?.trim()?.takeIf { it.isNotEmpty() }
+                val notionUrl = body.notionUrl?.trim()?.takeIf { it.isNotEmpty() }
+                var status = body.status?.trim() ?: "Development"
                 if (status !in ALLOWED_STATUSES) status = "Development"
-                insertProject(userId, projectId, bundleId, name, notionUrl, status, key)
-                context.respond(HttpStatusCode.OK, mapOf(
-                    "id" to projectId,
-                    "databaseUrl" to "https://$projectId-default-rtdb.firebaseio.com/",
-                    "name" to name,
-                    "notionUrl" to notionUrl,
-                    "status" to status
+                val developerId = body.developerId?.trim()?.toLongOrNull()
+                insertProject(userId, projectId, bundleId, name, notionUrl, status, key, developerId)
+                context.respond(HttpStatusCode.OK, CreateProjectResponse(
+                    id = projectId,
+                    databaseUrl = "https://$projectId-default-rtdb.firebaseio.com/",
+                    name = name,
+                    notionUrl = notionUrl,
+                    status = status
                 ))
             }
             put("/projects/{id}") {
                 val userId = context.requireUserId(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse("Invalid or missing initData"))
                     return@put
                 }
                 if (!requireRoleNotNone(getAppUser(userId))) {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse("Access denied"))
                     return@put
                 }
                 val projectId = context.parameters["id"] ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing project id"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse("Missing project id"))
                     return@put
                 }
                 val project = getProjectByProjectId(projectId) ?: run {
-                    context.respond(HttpStatusCode.NotFound, mapOf("error" to "Project not found"))
+                    context.respond(HttpStatusCode.NotFound, ErrorResponse("Project not found"))
                     return@put
                 }
-                val body = runCatching { context.receive<Map<String, String?>>() }.getOrNull() ?: emptyMap()
-                val name = body["name"]?.trim() ?: project.name ?: ""
-                val notionUrl = body["notionUrl"]?.trim() ?: project.notionUrl ?: ""
-                var status = body["status"]?.trim() ?: project.status
+                val body = runCatching { context.receive<UpdateProjectRequest>() }.getOrNull() ?: UpdateProjectRequest()
+                val name = body.name?.trim() ?: project.name ?: ""
+                val notionUrl = body.notionUrl?.trim() ?: project.notionUrl ?: ""
+                var status = body.status?.trim() ?: project.status
                 if (status !in ALLOWED_STATUSES) status = project.status
-                updateProjectMetaByProjectId(projectId, name, notionUrl, status)
-                context.respond(HttpStatusCode.OK, mapOf("id" to projectId))
+                val developerId = body.developerId?.trim()?.toLongOrNull()
+                val updateDeveloper = body.developerId != null
+                val bundleId = body.bundleId?.trim()?.takeIf { it.isNotEmpty() }
+                val updateBundleId = body.bundleId != null
+                updateProjectMetaByProjectId(projectId, name, notionUrl, status, developerId, updateDeveloper, bundleId, updateBundleId)
+                context.respond(HttpStatusCode.OK, IdResponse(projectId))
             }
             delete("/projects/{id}") {
                 val userId = context.requireUserId(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse("Invalid or missing initData"))
                     return@delete
                 }
                 if (!requireRoleNotNone(getAppUser(userId))) {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse("Access denied"))
                     return@delete
                 }
                 val projectId = context.parameters["id"] ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing project id"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse("Missing project id"))
                     return@delete
                 }
                 if (getProjectByProjectId(projectId) == null) {
-                    context.respond(HttpStatusCode.NotFound, mapOf("error" to "Project not found"))
+                    context.respond(HttpStatusCode.NotFound, ErrorResponse("Project not found"))
                     return@delete
                 }
                 deleteProjectByProjectId(projectId)
-                context.respond(HttpStatusCode.OK, mapOf("id" to projectId))
+                context.respond(HttpStatusCode.OK, IdResponse(projectId))
             }
             get("/projects/{id}/rules") {
                 val userId = context.requireUserId(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse( "Invalid or missing initData"))
                     return@get
                 }
                 if (!requireRoleNotNone(getAppUser(userId))) {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse( "Access denied"))
                     return@get
                 }
                 val projectId = context.parameters["id"] ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing project id"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse( "Missing project id"))
                     return@get
                 }
                 val project = getProjectByProjectId(projectId) ?: run {
-                    context.respond(HttpStatusCode.NotFound, mapOf("error" to "Project not found"))
+                    context.respond(HttpStatusCode.NotFound, ErrorResponse( "Project not found"))
                     return@get
                 }
                 val respondCall = context
@@ -249,32 +348,32 @@ fun Routing.miniappApiRoutes(bot: FirebaseTelegramBot) {
                     try {
                         val rulesJson = RulesService.getRules(project.projectId, project.databaseUrl, project.serviceAccountJson)
                         val (read, _) = parseReadWrite(rulesJson)
-                        respondCall.respond(mapOf("read" to read))
+                        respondCall.respond(RulesResponse(read = read))
                     } catch (e: Exception) {
-                        respondCall.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Failed to get rules")))
+                        respondCall.respond(HttpStatusCode.InternalServerError, ErrorResponse(e.message ?: "Failed to get rules"))
                     }
                 }
             }
             put("/projects/{id}/rules") {
                 val userId = context.requireUserId(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse("Invalid or missing initData"))
                     return@put
                 }
                 if (!requireRoleNotNone(getAppUser(userId))) {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse( "Access denied"))
                     return@put
                 }
                 val projectId = context.parameters["id"] ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing project id"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse( "Missing project id"))
                     return@put
                 }
                 val project = getProjectByProjectId(projectId) ?: run {
-                    context.respond(HttpStatusCode.NotFound, mapOf("error" to "Project not found"))
+                    context.respond(HttpStatusCode.NotFound, ErrorResponse( "Project not found"))
                     return@put
                 }
                 val body = runCatching { context.receive<Map<String, Boolean?>>() }.getOrNull()
                 val read = body?.get("read") ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing read"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse("Missing read"))
                     return@put
                 }
                 val respondCall = context
@@ -286,27 +385,27 @@ fun Routing.miniappApiRoutes(bot: FirebaseTelegramBot) {
                         RulesService.updateRules(project.projectId, project.databaseUrl, project.serviceAccountJson, newRules)
                         val userName = getAppUser(userId)?.name ?: userId.toString()
                         insertHistoryEntry(userId, userName, projectId, "rules_change", "Смена правил чтения: " + (if (read) "разрешено" else "запрещено"))
-                        respondCall.respond(mapOf("read" to read))
+                        respondCall.respond(RulesResponse(read = read))
                     } catch (e: Exception) {
-                        respondCall.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Failed to update rules")))
+                        respondCall.respond(HttpStatusCode.InternalServerError, ErrorResponse(e.message ?: "Failed to update rules"))
                     }
                 }
             }
             get("/projects/{id}/data") {
                 val userId = context.requireUserId(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse( "Invalid or missing initData"))
                     return@get
                 }
                 if (!requireRoleNotNone(getAppUser(userId))) {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse( "Access denied"))
                     return@get
                 }
                 val projectId = context.parameters["id"] ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing project id"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse( "Missing project id"))
                     return@get
                 }
                 val project = getProjectByProjectId(projectId) ?: run {
-                    context.respond(HttpStatusCode.NotFound, mapOf("error" to "Project not found"))
+                    context.respond(HttpStatusCode.NotFound, ErrorResponse( "Project not found"))
                     return@get
                 }
                 val respondCall = context
@@ -315,29 +414,29 @@ fun Routing.miniappApiRoutes(bot: FirebaseTelegramBot) {
                         val dataJson = RtdbDataService.getData(project.databaseUrl, project.serviceAccountJson, "/")
                         respondCall.respondText(dataJson, ContentType.Application.Json)
                     } catch (e: Exception) {
-                        respondCall.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Failed to get data")))
+                        respondCall.respond(HttpStatusCode.InternalServerError, ErrorResponse( (e.message ?: "Failed to get data")))
                     }
                 }
             }
             put("/projects/{id}/data/{fieldName}") {
                 val userId = context.requireUserId(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse( "Invalid or missing initData"))
                     return@put
                 }
                 if (!requireRoleNotNone(getAppUser(userId))) {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse( "Access denied"))
                     return@put
                 }
                 val projectId = context.parameters["id"] ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing project id"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse( "Missing project id"))
                     return@put
                 }
                 val fieldName = context.parameters["fieldName"] ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing fieldName"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse( "Missing fieldName"))
                     return@put
                 }
                 val project = getProjectByProjectId(projectId) ?: run {
-                    context.respond(HttpStatusCode.NotFound, mapOf("error" to "Project not found"))
+                    context.respond(HttpStatusCode.NotFound, ErrorResponse( "Project not found"))
                     return@put
                 }
                 val oldValue = context.request.queryParameters["oldValue"]
@@ -349,19 +448,19 @@ fun Routing.miniappApiRoutes(bot: FirebaseTelegramBot) {
                         val userName = getAppUser(userId)?.name ?: userId.toString()
                         val newValPreview = valueJson.take(200).let { if (it.length < valueJson.length) "$it…" else it }
                         insertHistoryEntry(userId, userName, projectId, "field_change", "Изменение ссылки $fieldName с «${oldValue ?: "?"}» на «$newValPreview»")
-                        respondCall.respond(HttpStatusCode.OK, mapOf("field" to fieldName))
+                        respondCall.respond(HttpStatusCode.OK, FieldResponse(field = fieldName))
                     } catch (e: Exception) {
-                        respondCall.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Failed to set field")))
+                        respondCall.respond(HttpStatusCode.InternalServerError, ErrorResponse( (e.message ?: "Failed to set field")))
                     }
                 }
             }
             get("/users") {
                 val appUser = context.requireAppUser(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse( "Invalid or missing initData"))
                     return@get
                 }
                 if (appUser.role != "admin") {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse( "Access denied"))
                     return@get
                 }
                 val users = listAllAppUsers().map { u ->
@@ -377,57 +476,57 @@ fun Routing.miniappApiRoutes(bot: FirebaseTelegramBot) {
             }
             put("/users/{userId}") {
                 val appUser = context.requireAppUser(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse( "Invalid or missing initData"))
                     return@put
                 }
                 if (appUser.role != "admin") {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse( "Access denied"))
                     return@put
                 }
                 val targetUserId = context.parameters["userId"]?.toLongOrNull() ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing or invalid userId"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse( "Missing or invalid userId"))
                     return@put
                 }
                 val body = runCatching { context.receive<Map<String, String?>>() }.getOrNull()
                 val role = body?.get("role")?.trim()?.takeIf { it in setOf("admin", "user", "none") } ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing or invalid role (admin, user, none)"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse( "Missing or invalid role (admin, user, none)"))
                     return@put
                 }
                 if (getAppUser(targetUserId) == null) {
-                    context.respond(HttpStatusCode.NotFound, mapOf("error" to "User not found"))
+                    context.respond(HttpStatusCode.NotFound, ErrorResponse( "User not found"))
                     return@put
                 }
                 updateAppUserRole(targetUserId, role)
                 bot.sendMessageToUser(targetUserId, "Ваши права доступа изменены: ${roleLabel(role)}.")
-                context.respond(HttpStatusCode.OK, mapOf("userId" to targetUserId, "role" to role))
+                context.respond(HttpStatusCode.OK, UserRoleResponse(userId = targetUserId, role = role))
             }
             delete("/users/{userId}") {
                 val appUser = context.requireAppUser(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse( "Invalid or missing initData"))
                     return@delete
                 }
                 if (appUser.role != "admin") {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse( "Access denied"))
                     return@delete
                 }
                 val targetUserId = context.parameters["userId"]?.toLongOrNull() ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing or invalid userId"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse( "Missing or invalid userId"))
                     return@delete
                 }
                 if (getAppUser(targetUserId) == null) {
-                    context.respond(HttpStatusCode.NotFound, mapOf("error" to "User not found"))
+                    context.respond(HttpStatusCode.NotFound, ErrorResponse( "User not found"))
                     return@delete
                 }
                 deleteAppUser(targetUserId)
-                context.respond(HttpStatusCode.OK, mapOf("userId" to targetUserId))
+                context.respond(HttpStatusCode.OK, UserIdResponse(userId = targetUserId))
             }
             get("/history") {
                 val appUser = context.requireAppUser(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse( "Invalid or missing initData"))
                     return@get
                 }
                 if (appUser.role != "admin") {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse( "Access denied"))
                     return@get
                 }
                 val projectIdFilter = context.request.queryParameters["projectId"]?.takeIf { it.isNotBlank() }
@@ -445,11 +544,11 @@ fun Routing.miniappApiRoutes(bot: FirebaseTelegramBot) {
             }
             get("/templates") {
                 val userId = context.requireUserId(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse( "Invalid or missing initData"))
                     return@get
                 }
                 if (!requireRoleNotNone(getAppUser(userId))) {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse( "Access denied"))
                     return@get
                 }
                 val list = listLinkTemplates().map { t -> TemplateListItem(id = t.id, name = t.name, link = t.link) }
@@ -457,16 +556,16 @@ fun Routing.miniappApiRoutes(bot: FirebaseTelegramBot) {
             }
             post("/templates") {
                 val appUser = context.requireAppUser(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse( "Invalid or missing initData"))
                     return@post
                 }
                 if (appUser.role != "admin") {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse( "Access denied"))
                     return@post
                 }
                 val body = runCatching { context.receive<Map<String, String?>>() }.getOrNull()
                 val name = body?.get("name")?.trim()?.takeIf { it.isNotEmpty() } ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing name"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse( "Missing name"))
                     return@post
                 }
                 val link = body?.get("link")?.trim() ?: ""
@@ -475,19 +574,19 @@ fun Routing.miniappApiRoutes(bot: FirebaseTelegramBot) {
             }
             delete("/templates/{id}") {
                 val appUser = context.requireAppUser(bot) ?: run {
-                    context.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing initData"))
+                    context.respond(HttpStatusCode.Unauthorized, ErrorResponse( "Invalid or missing initData"))
                     return@delete
                 }
                 if (appUser.role != "admin") {
-                    context.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
+                    context.respond(HttpStatusCode.Forbidden, ErrorResponse( "Access denied"))
                     return@delete
                 }
                 val id = context.parameters["id"]?.toIntOrNull() ?: run {
-                    context.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing or invalid id"))
+                    context.respond(HttpStatusCode.BadRequest, ErrorResponse( "Missing or invalid id"))
                     return@delete
                 }
                 deleteLinkTemplate(id)
-                context.respond(HttpStatusCode.OK, mapOf("id" to id))
+                context.respond(HttpStatusCode.OK, TemplateIdResponse(id = id))
             }
         }
 }

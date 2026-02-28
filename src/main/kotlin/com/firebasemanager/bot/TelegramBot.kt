@@ -1,6 +1,7 @@
 package com.firebasemanager.bot
 
 import com.firebasemanager.db.getAppUserChatId
+import com.firebasemanager.db.listAllAppUsers
 import com.firebasemanager.db.getOrCreateAppUser
 import com.firebasemanager.db.getProject
 import com.firebasemanager.db.insertProject
@@ -55,6 +56,13 @@ class FirebaseTelegramBot(
     fun sendMessageToUser(userId: Long, text: String) {
         val chatId = getAppUserChatId(userId) ?: return
         sendSafe(chatId, text)
+    }
+
+    /** Sends a message to all admins (who have chat_id from prior bot interaction). */
+    fun sendMessageToAdmins(text: String) {
+        listAllAppUsers().filter { it.role == "admin" }.forEach { admin ->
+            getAppUserChatId(admin.userId)?.let { chatId -> sendSafe(chatId, text) }
+        }
     }
 
     fun processUpdate(update: Update) {

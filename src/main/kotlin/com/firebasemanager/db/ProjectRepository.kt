@@ -16,7 +16,8 @@ data class StoredProject(
     val status: String,
     val serviceAccountJson: String,
     val databaseUrl: String,
-    val createdAt: Long?
+    val createdAt: Long?,
+    val developerId: Long?
 ) {
     val displayName: String get() = name?.takeIf { it.isNotBlank() } ?: bundleId?.takeIf { it.isNotBlank() } ?: projectId
 }
@@ -29,7 +30,8 @@ private fun ResultRow.toStoredProject(): StoredProject = StoredProject(
     status = this[ProjectTable.status],
     serviceAccountJson = this[ProjectTable.serviceAccountJson],
     databaseUrl = "https://${this[ProjectTable.projectId]}-default-rtdb.firebaseio.com/",
-    createdAt = this[ProjectTable.createdAt]
+    createdAt = this[ProjectTable.createdAt],
+    developerId = try { this.getOrNull(ProjectTable.developerId) } catch (_: Exception) { null }
 )
 
 fun listProjectsByUser(userId: Long): List<StoredProject> = transaction {
@@ -59,7 +61,8 @@ fun insertProject(
     name: String?,
     notionUrl: String?,
     status: String,
-    serviceAccountJson: String
+    serviceAccountJson: String,
+    developerId: Long? = null
 ) = transaction {
     ProjectTable.insert {
         it[ProjectTable.userId] = userId
@@ -70,23 +73,27 @@ fun insertProject(
         it[ProjectTable.status] = status
         it[ProjectTable.serviceAccountJson] = serviceAccountJson
         it[ProjectTable.createdAt] = System.currentTimeMillis()
+        it[ProjectTable.developerId] = developerId
     }
 }
 
-fun updateProjectMeta(userId: Long, projectId: String, name: String, notionUrl: String, status: String) = transaction {
+fun updateProjectMeta(userId: Long, projectId: String, name: String, notionUrl: String, status: String, developerId: Long? = null, updateDeveloper: Boolean = false) = transaction {
     ProjectTable.update({ ProjectTable.userId.eq(userId).and(ProjectTable.projectId.eq(projectId)) }) {
         it[ProjectTable.name] = name
         it[ProjectTable.notionUrl] = notionUrl
         it[ProjectTable.status] = status
+        if (updateDeveloper) it[ProjectTable.developerId] = developerId
     }
 }
 
 /** Updates all rows with this projectId (so all users see the same meta). */
-fun updateProjectMetaByProjectId(projectId: String, name: String, notionUrl: String, status: String) = transaction {
+fun updateProjectMetaByProjectId(projectId: String, name: String, notionUrl: String, status: String, developerId: Long? = null, updateDeveloper: Boolean = false, bundleId: String? = null, updateBundleId: Boolean = false) = transaction {
     ProjectTable.update({ ProjectTable.projectId eq projectId }) {
         it[ProjectTable.name] = name
         it[ProjectTable.notionUrl] = notionUrl
         it[ProjectTable.status] = status
+        if (updateDeveloper) it[ProjectTable.developerId] = developerId
+        if (updateBundleId) it[ProjectTable.bundleId] = bundleId
     }
 }
 

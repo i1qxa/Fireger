@@ -15,5 +15,10 @@ fun initDatabase() {
     )
     transaction {
         SchemaUtils.create(ProjectTable, AppUserTable, HistoryTable, LinkTemplateTable)
+        SchemaUtils.createMissingTablesAndColumns(ProjectTable, AppUserTable, HistoryTable, LinkTemplateTable)
+        // Явно добавляем недостающие колонки (миграция для developer_id)
+        try {
+            SchemaUtils.addMissingColumnsStatements(ProjectTable, withLogs = false).forEach { exec(it) }
+        } catch (_: Exception) { /* колонка уже есть */ }
     }
 }

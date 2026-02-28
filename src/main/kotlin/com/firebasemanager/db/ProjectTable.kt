@@ -11,6 +11,7 @@ object ProjectTable : Table("projects") {
     val status = varchar("status", 64)
     val serviceAccountJson = text("service_account_json")
     val createdAt = long("created_at").nullable()
+    val developerId = long("developer_id").nullable()
 
     override val primaryKey = PrimaryKey(userId, projectId)
 }

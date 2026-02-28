@@ -97,13 +97,21 @@
   <!-- Экран списка проектов -->
   <div id="listView" class="view active">
     <div class="card">
-      <h2>Фильтр по статусу</h2>
+      <h2>Фильтры</h2>
       <div class="filter-row" id="statusFilter">
         <label><input type="checkbox" name="statusFilter" value="Development" checked> Development</label>
         <label><input type="checkbox" name="statusFilter" value="Ready" checked> Ready</label>
         <label><input type="checkbox" name="statusFilter" value="Moderation" checked> Moderation</label>
         <label><input type="checkbox" name="statusFilter" value="Product" checked> Product</label>
         <label><input type="checkbox" name="statusFilter" value="Ban" checked> Ban</label>
+      </div>
+      <div class="filter-row" style="margin-top: 10px;">
+        <label for="developerFilter">Разработчик:</label>
+        <select id="developerFilter">
+          <option value="">Все разработчики</option>
+        </select>
+        <label for="bundleSearch">Поиск по bundle ID:</label>
+        <input type="text" id="bundleSearch" placeholder="Например: com.example" style="min-width: 160px;">
       </div>
     </div>
     <div class="card" id="projectsCard">
@@ -141,6 +149,12 @@
         </select>
       </div>
       <div class="add-row">
+        <label for="developerSelect">Разработчик</label>
+        <select id="developerSelect">
+          <option value="">— Не назначен —</option>
+        </select>
+      </div>
+      <div class="add-row">
         <label for="keyFileInput">Файл ключа (JSON)</label>
         <input type="file" id="keyFileInput" accept=".json,application/json">
       </div>
@@ -156,6 +170,7 @@
     <h2 id="detailTitle">Проект</h2>
     <div id="metaBlock" class="add-row">
       <h3>О проекте</h3>
+      <div class="add-row"><label>Bundle ID Android-приложения</label><input type="text" id="editBundleId" placeholder="Например: com.example.myapp"></div>
       <div class="add-row"><label>Название</label><input type="text" id="editName" placeholder="Название"></div>
       <div class="add-row"><label>Notion</label><input type="text" id="editNotion" placeholder="https://..."></div>
       <div class="add-row"><label>Статус</label><select id="editStatus">
@@ -164,6 +179,9 @@
         <option value="Moderation">Moderation</option>
         <option value="Product">Product</option>
         <option value="Ban">Ban</option>
+      </select></div>
+      <div class="add-row"><label>Разработчик</label><select id="editDeveloper">
+        <option value="">— Не назначен —</option>
       </select></div>
       <button id="saveMetaBtn">Сохранить</button>
       <p class="error" id="metaError"></p>
@@ -271,6 +289,7 @@
       let selectedId = null;
       let me = null;
       var initialFieldValues = {};
+      var usersCache = [];
 
       function setStatus(msg) {
         document.getElementById('status').textContent = msg || '';
@@ -320,9 +339,57 @@
         });
       }
 
+      function populateDeveloperSelect(sel, includeEmpty) {
+        if (!sel) return;
+        sel.innerHTML = '';
+        if (includeEmpty) {
+          var emptyOpt = document.createElement('option');
+          emptyOpt.value = '';
+          emptyOpt.textContent = '— Не назначен —';
+          sel.appendChild(emptyOpt);
+        }
+        usersCache.forEach(function(u) {
+          var opt = document.createElement('option');
+          opt.value = String(u.userId);
+          opt.textContent = u.name || ('ID ' + u.userId);
+          sel.appendChild(opt);
+        });
+      }
+
+      function populateDeveloperFilter() {
+        var sel = document.getElementById('developerFilter');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">Все разработчики</option>';
+        usersCache.forEach(function(u) {
+          var opt = document.createElement('option');
+          opt.value = String(u.userId);
+          opt.textContent = u.name || ('ID ' + u.userId);
+          sel.appendChild(opt);
+        });
+      }
+
+      function loadUsersForFilter() {
+        if (!me || me.role !== 'admin') return Promise.resolve();
+        return api('GET', '/api/users').then(function(data) {
+          usersCache = data.users || [];
+          populateDeveloperFilter();
+          return usersCache;
+        }).catch(function() { return []; });
+      }
+
       function renderProjectsList() {
         const selected = getSelectedStatuses();
-        const filtered = selected.length === 0 ? [] : projects.filter(p => selected.includes(p.status || 'Development'));
+        var filtered = selected.length === 0 ? [] : projects.filter(p => selected.includes(p.status || 'Development'));
+        var devFilter = document.getElementById('developerFilter');
+        var bundleSearch = document.getElementById('bundleSearch');
+        if (devFilter && devFilter.value) {
+          var devId = parseInt(devFilter.value, 10);
+          if (!isNaN(devId)) filtered = filtered.filter(p => p.developerId === devId);
+        }
+        if (bundleSearch && bundleSearch.value.trim()) {
+          var q = bundleSearch.value.trim().toLowerCase();
+          filtered = filtered.filter(p => (p.bundleId || '').toLowerCase().indexOf(q) >= 0);
+        }
         const list = document.getElementById('projectsList');
         const emptyState = document.getElementById('emptyState');
         list.innerHTML = '';
@@ -347,7 +414,8 @@
         return api('GET', '/api/projects').then(data => {
           projects = data.projects || [];
           setStatus('');
-          renderProjectsList();
+          if (me && me.role === 'admin') loadUsersForFilter().then(renderProjectsList);
+          else renderProjectsList();
         }).catch(err => {
           setStatus('Ошибка: ' + err.message);
         });
@@ -490,9 +558,23 @@
         const proj = projects.find(p => p.id === id);
         document.getElementById('detailTitle').textContent = 'Проект: ' + (proj && (proj.name || proj.displayName) ? (proj.name || proj.displayName) : id);
         if (proj) {
+          var editBundle = document.getElementById('editBundleId');
+          if (editBundle) editBundle.value = proj.bundleId || '';
           document.getElementById('editName').value = proj.name || '';
           document.getElementById('editNotion').value = proj.notionUrl || '';
           document.getElementById('editStatus').value = proj.status || 'Development';
+          var editDev = document.getElementById('editDeveloper');
+          if (editDev) {
+            if (me && me.role === 'admin' && usersCache.length === 0) {
+              loadUsersForFilter().then(function() {
+                populateDeveloperSelect(editDev, true);
+                editDev.value = proj.developerId ? String(proj.developerId) : '';
+              });
+            } else {
+              populateDeveloperSelect(editDev, true);
+              editDev.value = proj.developerId ? String(proj.developerId) : '';
+            }
+          }
         }
         document.getElementById('metaError').textContent = '';
         loadRules(id);
@@ -500,12 +582,18 @@
       }
 
       document.getElementById('statusFilter').addEventListener('change', renderProjectsList);
+      var developerFilterEl = document.getElementById('developerFilter');
+      if (developerFilterEl) developerFilterEl.addEventListener('change', renderProjectsList);
+      var bundleSearchEl = document.getElementById('bundleSearch');
+      if (bundleSearchEl) bundleSearchEl.addEventListener('input', renderProjectsList);
 
       function resetCreateForm() {
         document.getElementById('bundleIdInput').value = '';
         document.getElementById('nameInput').value = '';
         document.getElementById('notionInput').value = '';
         document.getElementById('statusSelect').value = 'Development';
+        var devSel = document.getElementById('developerSelect');
+        if (devSel) devSel.value = '';
         document.getElementById('keyError').textContent = '';
         var fileInput = document.getElementById('keyFileInput');
         fileInput.value = '';
@@ -516,7 +604,15 @@
 
       document.getElementById('goToAddBtn').addEventListener('click', () => {
         resetCreateForm();
-        showView('create');
+        if (me && me.role === 'admin' && usersCache.length === 0) {
+          loadUsersForFilter().then(function() {
+            populateDeveloperSelect(document.getElementById('developerSelect'), true);
+            showView('create');
+          });
+        } else {
+          populateDeveloperSelect(document.getElementById('developerSelect'), true);
+          showView('create');
+        }
       });
       document.getElementById('backFromCreateBtn').addEventListener('click', () => showView('list'));
       document.getElementById('backFromDetailBtn').addEventListener('click', () => showView('list'));
@@ -540,14 +636,26 @@
 
       document.getElementById('saveMetaBtn').addEventListener('click', () => {
         if (!selectedId) return;
+        var editBundle = document.getElementById('editBundleId');
+        const bundleId = editBundle ? editBundle.value.trim() : '';
         const name = document.getElementById('editName').value.trim();
         const notionUrl = document.getElementById('editNotion').value.trim();
         const status = document.getElementById('editStatus').value;
+        var editDev = document.getElementById('editDeveloper');
+        var developerId = editDev && editDev.value ? editDev.value : null;
         document.getElementById('metaError').textContent = '';
-        api('PUT', '/api/projects/' + encodeURIComponent(selectedId), { name: name, notionUrl: notionUrl, status: status })
+        var body = { name: name, notionUrl: notionUrl, status: status, bundleId: bundleId };
+        if (editDev) body.developerId = developerId;
+        api('PUT', '/api/projects/' + encodeURIComponent(selectedId), body)
           .then(() => {
             const proj = projects.find(p => p.id === selectedId);
-            if (proj) { proj.name = name; proj.notionUrl = notionUrl; proj.status = status; }
+            if (proj) {
+              proj.bundleId = bundleId || null;
+              proj.name = name;
+              proj.notionUrl = notionUrl;
+              proj.status = status;
+              proj.developerId = developerId ? parseInt(developerId, 10) : null;
+            }
             renderProjectsList();
           })
           .catch(err => {
@@ -653,28 +761,6 @@
         }
       }
 
-      (function enablePaste() {
-        var isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || ('ontouchstart' in document.documentElement);
-        if (!isMobile) return;
-        document.addEventListener('paste', function(e) {
-          var el = e.target;
-          if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
-          var text = null;
-          if (e.clipboardData && e.clipboardData.getData) {
-            text = e.clipboardData.getData('text/plain');
-          } else if (window.clipboardData && window.clipboardData.getData) {
-            text = window.clipboardData.getData('Text');
-          }
-          if (!text) return;
-          e.preventDefault();
-          var start = el.selectionStart != null ? el.selectionStart : el.value.length;
-          var end = el.selectionEnd != null ? el.selectionEnd : el.value.length;
-          var val = el.value || '';
-          el.value = val.substring(0, start) + text + val.substring(end);
-          el.selectionStart = el.selectionEnd = start + text.length;
-        }, true);
-      })();
-
       function saveField(projectId, fieldName, value, oldValue) {
         let valueJson = value.trim();
         if (!valueJson.startsWith('{') && !valueJson.startsWith('[') && valueJson !== 'null') {
@@ -716,10 +802,13 @@
           const name = document.getElementById('nameInput').value.trim();
           const notionUrl = document.getElementById('notionInput').value.trim();
           const status = document.getElementById('statusSelect').value;
+          var devSel = document.getElementById('developerSelect');
+          var developerId = devSel && devSel.value ? devSel.value : null;
           const body = { key: key, status: status };
           if (bundleId) body.bundleId = bundleId;
           if (name) body.name = name;
           if (notionUrl) body.notionUrl = notionUrl;
+          if (developerId) body.developerId = developerId;
           api('POST', '/api/projects', body)
             .then(() => {
               document.getElementById('bundleIdInput').value = '';
