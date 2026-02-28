@@ -1,0 +1,20 @@
+[Unit]
+Description=Firebase Manager Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/firebase-manager
+ExecStart=/usr/bin/java -jar /opt/firebase-manager/firebase-manager.jar
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Переменные окружения
+Environment="BOT_TOKEN=8526577591:AAEfDi-GQ7EqNWaSAVoqZgXufgN1-Nc4-FU"
+Environment="WEBHOOK_BASE_URL=https://176.113.83.188:8443"
+
+[Install]
+WantedBy=multi-user.target

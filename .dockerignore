@@ -1,0 +1,31 @@
+# Build and IDE (keep fat JAR for Docker)
+build/
+!build/libs/firebase-manager.jar
+.gradle/
+out/
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Data and local state
+data/
+*.db
+*.mv.db
+*.lock.db
+
+# Git and misc
+.git/
+.gitignore
+*.md
+!README.md
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Logs and temp
+*.log
+*.tmp
+.DS_Store

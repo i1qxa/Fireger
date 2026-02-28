@@ -13,9 +13,22 @@ build/
 config/service-accounts/*.json
 projects.json
 
+# Local DB (Exposed/H2)
+data/
+
 # Logs
 *.log
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Local overrides (токен, URL сервера — не коммитить при локальной подстановке)
+.env
+.env.local
+application.local.conf
+config.local.*
+**/secrets*
+
+# SSL keystore (генерируется при первом запуске)
+keystore.jks
